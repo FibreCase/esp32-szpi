@@ -1,0 +1,11 @@
+# Based on ESP-IDF components/partition_table/partitions_two_ota_large.csv.
+# 16 MiB Flash; two equal 8128 KiB OTA slots; no factory application.
+# Blank offsets are aligned automatically by gen_esp32part.py.
+# Name,   Type, SubType, Offset, Size,     Flags
+nvs,      data, nvs,     ,       0x6000,
+otadata,  data, ota,     ,       0x2000,
+phy_init, data, phy,     ,       0x1000,
+ota_0,    app,  ota_0,   ,       0x7F0000,
+ota_1,    app,  ota_1,   ,       0x7F0000,
+# ota_0: 0x020000..0x80FFFF; ota_1: 0x810000..0xFFFFFF.
+# Both slots fill all Flash space after the first application offset.

@@ -1,0 +1,123 @@
+# 第二阶段：显示、触摸与 LVGL 验证 UI
+
+制定日期：2026-10-07。状态：**实现与构建完成；逻辑测试和上板验收待完成**。
+
+依据：[开发规则](../../AGENTS.md)、[硬件接线](../hardware_io.md)、[代码架构](../code_architecture.md)。用户已授权进入第二阶段；第一阶段未完成的验收继续保留，不改记为通过。
+
+## 1. 目标与范围
+
+接入 ST7789 显示、FT6336 触摸和最新稳定版 LVGL，制作一个 320×240 横屏验证页面，验证颜色、方向、刷新、点击、拖动、背光及基础状态显示。任务与资源继续由现有 FreeRTOS runtime 协调。
+
+本阶段不接入摄像头、音频、SD、OTA 或完整产品页面，不引入大型 demo、图像资产及中文字体包。首个页面使用英文及数字，减少字体依赖。
+
+开始实现前同步架构文档的实际状态。第一阶段检查发现的 Wi-Fi FAILED 后迟到 GOT_IP、STA 初始化 API 内部 abort 风险另行跟踪；UI 只展示实际状态，不借页面掩盖这些问题。
+
+## 2. 版本与依赖
+
+2026-10-07 查询：上游最新稳定发布为 [LVGL v9.6.0](https://github.com/lvgl/lvgl/releases/tag/v9.6.0)，ESP 组件仓库最新包为 [lvgl/lvgl 9.6.0~1](https://components.espressif.com/components/lvgl/lvgl/versions/9.6.0~1/readme)。`~1` 为组件包修订号。
+
+- [x] 在 `szpi_display/idf_component.yml` 固定 `lvgl/lvgl` `9.6.0~1`；组件管理器生成并保留 `dependencies.lock`。实施前复核了稳定版本并记录实际选择。
+- [x] 用 IDF 自带 `esp_lcd` ST7789 驱动，保留 ESP-IDF 6.1、MINIMAL_BUILD 和现有 Flash / PSRAM / 分区设置。
+- [x] 采用 LVGL 9 API，实现 display、indev、tick、flush 和内存配置；未混用 LVGL 8 API。
+- [x] LVGL 绑定放 `szpi_display`，runtime 创建唯一 UI 任务；未引入另建刷新任务的 `esp_lvgl_port`。
+- [x] 核对了 FT6336 官方驱动的具体型号覆盖范围；为避免把 FT6336U 的支持误认为板载 FT6336 已验证，在 `szpi_input` 实现有界的新 I²C API 寄存器读取，选择理由见验证记录。
+
+## 3. 硬件初始配置
+
+| 项目 | 初始配置 |
+| --- | --- |
+| LCD | ST7789，320×240 横屏，RGB565 / RGB |
+| SPI | SPI2_HOST，20MHz，mode 2；MOSI=40、CLK=41、DC=39，无 MISO |
+| LCD CS | PCA9557 IO0，低有效；API 的 CS GPIO=-1 |
+| LCD RESET | 共用 RESET，API 的 reset GPIO=-1；采用驱动软件复位 |
+| 显示方向 | swap_xy=true，mirror_x=true、mirror_y=false，invert=true，gap=0/0 |
+| 背光 | GPIO42 低有效；LEDC timer1/channel1，5kHz、10bit、输出反相 |
+| 触摸 | FT6336，7-bit 地址 0x38；复用 board I²C0 / GPIO1、2 / 100kHz |
+| 触摸时序 | 无 IRQ，20ms 轮询；无独立 reset，不操作共用 RESET |
+
+上述值来自硬件文档，方向、偏移、字节序和触摸映射必须通过实物校准。固定引脚、地址、LEDC 分配只定义在 board bindings，可调显示和触摸参数集中管理。
+
+## 4. 组件与资源归属
+
+| 位置 | 本阶段职责 |
+| --- | --- |
+| szpi_board | 扩充 LCD / 触摸 bindings；提供共享 I²C 借用或设备接入接口；维护 PCA9557 语义控制 |
+| szpi_display | SPI / esp_lcd、背光、刷新缓冲及 LVGL display 绑定 |
+| szpi_input | FT6336 初始化、读取、坐标转换、故障及释放状态；不创建任务或 UI 对象 |
+| szpi_app/src/ui_service.c | 唯一 UI 任务入口、LVGL indev 绑定、验证页面、周期状态更新及协作停止 |
+| szpi_app/src/szpi_runtime.c | 任务表、启动屏障、能力状态、资源登记、启停及监督 |
+
+- [x] board 保持总线所有权；触摸只创建 / 删除自己的设备句柄，不删除共享总线，不混用新旧 I²C 驱动。
+- [ ] 接入触摸与 LCD CS 时，验证 PCA9557 bit 更新保留功放关闭和摄像头掉电状态。
+- [x] 本阶段 SPI2 专用于 LCD；初始化前由 board 拉低 CS，保持至停止且 SPI 空闲后释放；DMA 回调不进行 I²C 片选操作。
+- [x] `szpi_ui` 初始优先级 5、内部 RAM 静态栈 6144 字节、tskNO_AFFINITY；由 runtime 唯一创建，不增加独立触摸任务。
+- [x] 新增 UI_READY / DISPLAY_FAULT / TOUCH_FAULT 等能力状态；触摸失败允许保留显示，显示失败保留 supervisor / Wi-Fi。
+- [x] 在验证记录中登记 SPI / panel / touch 句柄、LEDC、LVGL 对象、缓冲和同步对象的所有者、容量、销毁者与失败清理顺序。
+
+## 5. LVGL 与异步刷新规则
+
+- [x] 所有 UI 对象创建、更新、输入处理和 `lv_timer_handler()` 集中在 `szpi_ui`。Wi-Fi / supervisor 通过状态快照传递信息，不直接调用 LVGL。
+- [x] LVGL tick 使用 `esp_timer_get_time()` 转换的单调毫秒回调；未安装增量 tick timer。
+- [x] `lv_timer_handler()` 后按 10ms 周期等待通知，触摸读取定时器为 20ms；无忙等循环。
+- [x] 采用 PARTIAL 渲染，两个 `320×20×2` 字节缓冲，共 25600 字节，显式申请内部 RAM、DMA 能力及 4 字节对齐。20MHz SPI 下不承诺全屏 60fps。
+- [x] LVGL 示例与 demo 已关闭；DMA 缓冲明确不使用普通 PSRAM malloc。
+- [x] RGB565 提交前仅转换当前 flush 区域一次；具体颜色及字节序仍待上板验证。
+- [x] 将 LVGL inclusive 区域转换为 esp_lcd exclusive 结束坐标；边界显示仍待上板验证。
+- [x] DMA 完成通过 ISR semaphore 桥接；缓冲只在完成确认后归还 LVGL，提交失败进入显示故障状态。
+- [x] 完成回调只使用 `xSemaphoreGiveFromISR`。UI 任务内等待完成，不在 ISR 调用 LVGL。
+- [ ] 等待刷新有上限；超时不能假装 DMA 完成，也不能释放 / 重用仍在途的内存。先安全停止或确认驱动空闲，无法确认时保留缓冲并报告故障。
+
+## 6. 触摸适配
+
+- [x] 有界读取最多 2 个触点的计数、事件、ID 和原始坐标；LVGL pointer 使用一个稳定主触点。
+- [x] 无触点立即报告 RELEASED；读取失败使用最后有效坐标并解除按下状态。连续 5 次失败标记 TOUCH_FAULT，不无限自动重新初始化设备。
+- [x] 初始假设原始坐标范围为 240×320，映射集中实现为 `x=319-raw_y, y=raw_x`；实际范围与旋转仍待上板确认。
+- [x] 非法触点计数、越界坐标和释放 / 无事件数据不作为有效点击；释放使用最后有效坐标。映射失败不会被裁剪成边界坐标。
+- [ ] 显示旋转与触摸映射各只执行一次；四角、中心及边缘逐项验证，不从 LCD swap_xy 推断触摸自动正确。
+- [x] I²C 事务使用 20ms 超时；UI 状态记录连续错误数及最长读取耗时，达到阈值后只报告一次并停止读触摸。
+
+## 7. 最小验证页面
+
+单屏布局使用 LVGL 原生控件，无滚动和弹窗：
+
+| 区域 | 内容与验证目的 |
+| --- | --- |
+| 顶栏 | `SZPI Display Test`、Wi-Fi 状态；不显示凭据，不将 NETWORK_READY 描述为互联网可用 |
+| 色块区 | 红、绿、蓝、白色块及四角标记，检查色序、反色、裁切和旋转 |
+| 点击区 | `Tap +1` 按钮与计数，按 CLICKED 计数，长按不重复累计 |
+| 滑条区 | Brightness 10–100%，初始 50%；拖动更新实际背光亮度，避开全黑导致无法操作 |
+| 底栏 | 最近触摸 x/y、Pressed / Released、运行秒数，每秒更新状态文本 |
+
+- [x] 页面按 320×240 布局，按钮和滑条均设置至少 36 像素高的交互区域。
+- [x] 初始屏幕刷新完成后再开启背光；触摸不可用时保留显示并提示 `Touch unavailable`。
+- [x] 点击区与滑条分开，触摸释放会报告 RELEASED；交互及刷新流畅度仍待上板验收。
+
+## 8. 实现顺序与验收
+
+| 顺序 | 任务 | 交付 |
+| --- | --- | --- |
+| 1 | P2-01 | 锁定 LVGL / 触摸依赖，扩充 board bindings 和共享总线接口 |
+| 2 | P2-02 | ST7789、背光及四色 / 四角基础验证 |
+| 3 | P2-03 | FT6336 读取、原始坐标及横屏映射 |
+| 4 | P2-04 | runtime UI 任务、LVGL display / indev、DMA 完成桥接 |
+| 5 | P2-05 | 单屏验证 UI、状态快照、降级和协作停止 |
+| 6 | P2-06 | 构建、逻辑测试、上板校准及验证记录 |
+
+### 构建与逻辑检查
+
+- [x] ESP-IDF 6.1 构建通过；记录了实际依赖版本、镜像大小和 OTA 余量。独立干净 defaults 完整构建通过，默认凭据为空。
+- [x] 用主机 C 测试覆盖坐标映射的四角、中心、越界值和空指针，以及双触点的稳定主 ID 与释放选择逻辑。
+- [ ] 测试刷新区域边界、提交失败、完成通知和超时；证明缓冲不会在 DMA 完成前覆写 / 释放。
+- [ ] 测试初始化中途失败逆序清理、重复 start / stop、背光关闭及触摸缺失降级。
+- [ ] STOP 唤醒 UI，在初始目标 3 秒内完成在途收尾、关闭背光、删除 UI / 驱动资源并确认；超时必须报告失败，不强删执行中任务。
+
+### 上板验收（逐项记录实际结果）
+
+- [ ] 色块准确，四角及最后一行 / 列可见，横屏方向正确；校准值回写 hardware_io。
+- [ ] 四角、中心、边缘触摸落点与 UI 一致；点按 100 次无重复累计，按下 / 拖动 / 释放正常。
+- [ ] 背光在 10%、50%、100% 可观察变化；停止时关闭，启动无明显杂乱画面。
+- [ ] Wi-Fi 联网及断线期间页面仍可操作；展示状态来自真实快照。
+- [ ] 10 次显示 / 触摸服务启停无重复安装资源、无持续堆泄漏；记录预热后堆变化。
+- [ ] 连续运行 30 分钟，无异常重启、watchdog、堆损坏或触摸卡死；记录 UI 栈余量、内部 / PSRAM 最低堆、刷新超时和触摸错误数。
+
+实际验证后创建 `docs/phase_2_validation.md`，记录版本、命令、错误、校准值和测量数据。未执行项目标为未验证，不预填通过。实现、逻辑检查和上板验收完成后再将阶段标为完成；同步 README、AGENTS 和架构文档。

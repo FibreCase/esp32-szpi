@@ -1,0 +1,23 @@
+menu "SZPI application"
+
+config SZPI_WIFI_ENABLED
+    bool "Enable Wi-Fi station"
+    default y
+    help
+        Enable the configured 2.4 GHz Wi-Fi station service.
+
+config SZPI_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+    depends on SZPI_WIFI_ENABLED
+    help
+        Local development setting. The value is compiled into the firmware.
+
+config SZPI_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+    depends on SZPI_WIFI_ENABLED
+    help
+        WPA2-PSK password. The value is compiled into the firmware.
+
+endmenu
