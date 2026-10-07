@@ -9,7 +9,7 @@
 
 #define SZPI_DISPLAY_WIDTH 320
 #define SZPI_DISPLAY_HEIGHT 240
-#define SZPI_DISPLAY_BUFFER_LINES 20
+#define SZPI_DISPLAY_BUFFER_LINES 40
 #define SZPI_DISPLAY_BUFFER_BYTES (SZPI_DISPLAY_WIDTH * SZPI_DISPLAY_BUFFER_LINES * 2)
 
 // Requires lv_init() from the UI task. Owns the LVGL display binding and DMA buffers.

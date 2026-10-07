@@ -7,11 +7,11 @@ int main(void)
     uint16_t x = 0;
     uint16_t y = 0;
 
-    assert(szpi_input_map_coordinates(0, 319, &x, &y) && x == 0 && y == 0);
-    assert(szpi_input_map_coordinates(0, 0, &x, &y) && x == 319 && y == 0);
-    assert(szpi_input_map_coordinates(239, 319, &x, &y) && x == 0 && y == 239);
-    assert(szpi_input_map_coordinates(239, 0, &x, &y) && x == 319 && y == 239);
-    assert(szpi_input_map_coordinates(120, 160, &x, &y) && x == 159 && y == 120);
+    assert(szpi_input_map_coordinates(0, 319, &x, &y) && x == 319 && y == 239);
+    assert(szpi_input_map_coordinates(0, 0, &x, &y) && x == 0 && y == 239);
+    assert(szpi_input_map_coordinates(239, 319, &x, &y) && x == 319 && y == 0);
+    assert(szpi_input_map_coordinates(239, 0, &x, &y) && x == 0 && y == 0);
+    assert(szpi_input_map_coordinates(120, 160, &x, &y) && x == 160 && y == 119);
     assert(!szpi_input_map_coordinates(240, 0, &x, &y));
     assert(!szpi_input_map_coordinates(0, 320, &x, &y));
     assert(!szpi_input_map_coordinates(0, 0, NULL, &y));

@@ -64,7 +64,22 @@ static esp_err_t set_output_bit(uint8_t bit, bool high, TickType_t timeout_ticks
     if (err == ESP_OK) {
         s_output = next;
     }
+    uint8_t input = 0, output = 0, config = 0;
+    esp_err_t readback_error = ESP_OK;
+    if (err == ESP_OK && bit == s_bindings.lcd_cs_bit) {
+        readback_error = pca_read(PCA_REG_INPUT, &input);
+        if (readback_error == ESP_OK) readback_error = pca_read(PCA_REG_OUTPUT, &output);
+        if (readback_error == ESP_OK) readback_error = pca_read(PCA_REG_CONFIG, &config);
+    }
     xSemaphoreGive(s_lock);
+    if (err == ESP_OK && bit == s_bindings.lcd_cs_bit) {
+        if (readback_error == ESP_OK) {
+            ESP_LOGI(TAG, "LCD CS requested=%u pin=%u output=0x%02x config=0x%02x",
+                (unsigned)high, (unsigned)((input >> bit) & 1U), output, config);
+        } else {
+            ESP_LOGW(TAG, "LCD CS write succeeded; readback failed: %s", esp_err_to_name(readback_error));
+        }
+    }
     return err;
 }
 

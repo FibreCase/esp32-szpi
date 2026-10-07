@@ -1,0 +1,13 @@
+menu "SZPI display"
+
+config SZPI_DISPLAY_SPI_CLOCK_HZ
+    int "LCD SPI clock override in Hz (0 uses board default)"
+    range 0 80000000
+    default 0
+
+config SZPI_DISPLAY_SPI_MODE
+    int "LCD SPI mode"
+    range 0 3
+    default 2
+
+endmenu

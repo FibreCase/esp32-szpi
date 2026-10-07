@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "szpi_board.h"
+#include "szpi_display.h"
 #include "szpi_runtime_internal.h"
 
 #define TAG "szpi_runtime"
@@ -65,7 +66,7 @@ static const runtime_resource_descriptor_t s_resource_table[] = {
     {"system_events", "szpi_app", 0},
     {"wifi_status_mutex", "szpi_app", 1},
     {"ui_status_mutex", "szpi_app", 1},
-    {"ui_draw_buffers", "szpi_display", 2U * 320U * 20U * 2U},
+    {"ui_draw_buffers", "szpi_display", 2U * SZPI_DISPLAY_BUFFER_BYTES},
 };
 
 static esp_err_t create_runtime_resources(szpi_wifi_service_state_t initial_wifi_state)

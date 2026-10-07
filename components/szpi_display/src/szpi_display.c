@@ -39,6 +39,7 @@ static esp_err_t s_last_flush_error;
 static esp_err_t draw_bitmap(const void *rgb565, uint16_t x1, uint16_t y1,
                              uint16_t x2_exclusive, uint16_t y2_exclusive);
 
+
 static uint32_t display_tick_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
@@ -162,15 +163,13 @@ esp_err_t szpi_display_init(lv_display_t **display)
     err = spi_bus_initialize(s_bindings->lcd_spi_host, &bus, SPI_DMA_CH_AUTO);
     if (err != ESP_OK) goto fail;
     s_spi_initialized = true;
-    err = szpi_board_set_lcd_selected(true, pdMS_TO_TICKS(100));
-    if (err != ESP_OK) goto fail;
-    s_cs_selected = true;
-
+    uint32_t spi_clock_hz = CONFIG_SZPI_DISPLAY_SPI_CLOCK_HZ > 0
+        ? CONFIG_SZPI_DISPLAY_SPI_CLOCK_HZ : s_bindings->lcd_spi_clock_hz;
     esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = GPIO_NUM_NC,
         .dc_gpio_num = s_bindings->lcd_dc,
-        .spi_mode = 2,
-        .pclk_hz = s_bindings->lcd_spi_clock_hz,
+        .spi_mode = CONFIG_SZPI_DISPLAY_SPI_MODE,
+        .pclk_hz = spi_clock_hz,
         .trans_queue_depth = LCD_QUEUE_DEPTH,
         .on_color_trans_done = lcd_color_trans_done,
         .user_ctx = NULL,
@@ -178,6 +177,13 @@ esp_err_t szpi_display_init(lv_display_t **display)
         .lcd_param_bits = 8,
     };
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)s_bindings->lcd_spi_host, &io_config, &s_io);
+    if (err != ESP_OK) goto fail;
+
+    // The SZPI reference requires reset -> CS low -> panel init. Keep CS
+    // released for the reset transaction, which also establishes SPI mode 2
+    // before the panel starts receiving commands. There is no independent
+    // reset GPIO; this sequence relies on the board's shared hardware reset.
+    err = szpi_board_set_lcd_selected(false, pdMS_TO_TICKS(100));
     if (err != ESP_OK) goto fail;
 
     esp_lcd_panel_dev_config_t panel_config = {
@@ -188,10 +194,14 @@ esp_err_t szpi_display_init(lv_display_t **display)
     };
     err = esp_lcd_new_panel_st7789(s_io, &panel_config, &s_panel);
     if (err == ESP_OK) err = esp_lcd_panel_reset(s_panel);
+    if (err == ESP_OK) {
+        err = szpi_board_set_lcd_selected(true, pdMS_TO_TICKS(100));
+        if (err == ESP_OK) s_cs_selected = true;
+    }
     if (err == ESP_OK) err = esp_lcd_panel_init(s_panel);
+    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, true);
     if (err == ESP_OK) err = esp_lcd_panel_swap_xy(s_panel, true);
     if (err == ESP_OK) err = esp_lcd_panel_mirror(s_panel, true, false);
-    if (err == ESP_OK) err = esp_lcd_panel_invert_color(s_panel, true);
     if (err == ESP_OK) err = esp_lcd_panel_set_gap(s_panel, 0, 0);
     if (err == ESP_OK) err = esp_lcd_panel_disp_on_off(s_panel, true);
     if (err != ESP_OK) goto fail;
@@ -210,8 +220,8 @@ esp_err_t szpi_display_init(lv_display_t **display)
         SZPI_DISPLAY_BUFFER_BYTES, LV_DISPLAY_RENDER_MODE_PARTIAL);
     s_initialized = true;
     *display = s_display;
-    ESP_LOGI(TAG, "ST7789 initialized %ux%u SPI=%" PRIu32 "Hz; two internal DMA buffers=%u bytes; LCD CS held selected",
-        SZPI_DISPLAY_WIDTH, SZPI_DISPLAY_HEIGHT, s_bindings->lcd_spi_clock_hz, (unsigned)(2U * SZPI_DISPLAY_BUFFER_BYTES));
+    ESP_LOGI(TAG, "ST7789 initialized %ux%u SPI=%" PRIu32 "Hz mode=%u; two internal DMA buffers=%u bytes; LCD CS held selected",
+        SZPI_DISPLAY_WIDTH, SZPI_DISPLAY_HEIGHT, spi_clock_hz, CONFIG_SZPI_DISPLAY_SPI_MODE, (unsigned)(2U * SZPI_DISPLAY_BUFFER_BYTES));
     return ESP_OK;
 
 fail:

@@ -44,8 +44,9 @@ static inline bool szpi_input_map_coordinates(uint16_t raw_x, uint16_t raw_y,
     if (x == NULL || y == NULL || raw_x > SZPI_INPUT_RAW_X_MAX || raw_y > SZPI_INPUT_RAW_Y_MAX) {
         return false;
     }
-    uint16_t mapped_x = (SZPI_INPUT_DISPLAY_WIDTH - 1U) - raw_y;
-    uint16_t mapped_y = raw_x;
+    // Board feedback: rotate the original landscape mapping by 180 degrees.
+    uint16_t mapped_x = raw_y;
+    uint16_t mapped_y = (SZPI_INPUT_DISPLAY_HEIGHT - 1U) - raw_x;
     if (mapped_x >= SZPI_INPUT_DISPLAY_WIDTH || mapped_y >= SZPI_INPUT_DISPLAY_HEIGHT) return false;
     *x = mapped_x;
     *y = mapped_y;

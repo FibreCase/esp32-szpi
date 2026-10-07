@@ -6,7 +6,7 @@
 - 接线与默认参数以 `docs/hardware_io.md` 为依据；原理图 `docs/hardware_schematic.pdf` V1.0.1，型号参数来自 `docs/hareware_description.png`，摄像头 GC2145 由用户确认。
 - 结构和长期规范见 `docs/code_architecture.md`。用户已授权查询资料并采用通用初始配置，常规方向 / 频率 / 槽映射在上板时验证，不作为开工前确认阻塞项。
 - 第一阶段范围与验收见根目录 `task_phase_1.md`：基础资源、安全启动、FreeRTOS runtime、Wi-Fi STA / DHCP 及有限重连；实现时遵循其中任务顺序和停止 / 失败策略。
-- 第二阶段范围与验收见 `docs/develop/task_phase_2.md`：ST7789、FT6336、LVGL 与单屏验证 UI。LVGL 绑定在 szpi_display，页面在 szpi_app；唯一 UI 任务由 runtime 创建，遵守 DMA 完成与缓冲归还规则。实现和构建已完成，逻辑测试与上板校准仍待完成，见 `docs/phase_2_validation.md`。
+- 第二阶段范围与验收见 `docs/develop/task_phase_2.md`：ST7789、FT6336、LVGL 与单屏验证 UI。LVGL 绑定在 szpi_display，页面在 szpi_app；唯一 UI 任务由 runtime 创建，遵守 DMA 完成与缓冲归还规则。实现和构建已完成，逻辑测试与上板校准仍待完成，见 `docs/develop/phase_2_validation.md`。
 - 第一阶段代码已落在启动装配、`szpi_board`、`szpi_app` 与 `szpi_wifi`；ESP-IDF 6.1 构建通过。逻辑测试与板上验收状态见 `docs/phase_1_validation.md`。规划中的后续组件仍按需求逐步创建，不把计划当成已实现，不添加空组件、占位任务或虚假成功接口。
 
 ## 结构与边界

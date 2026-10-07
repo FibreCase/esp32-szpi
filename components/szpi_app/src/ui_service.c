@@ -14,7 +14,7 @@
 
 #define TAG "szpi_ui"
 #define TOUCH_PERIOD_MS 20
-#define UI_LOOP_PERIOD_MS 10
+#define UI_LOOP_PERIOD_MS 4
 #define FLUSH_WAIT_SLICE_MS 250
 
 static lv_display_t *s_lv_display;
@@ -193,7 +193,7 @@ static void make_ui(void)
     lv_label_set_text(s_touch_fault_label, "Touch unavailable");
     lv_obj_set_pos(s_touch_fault_label, 178, 130);
     lv_obj_set_style_text_color(s_touch_fault_label, lv_color_hex(0xF4A261), 0);
-    lv_obj_set_hidden(s_touch_fault_label, true);
+    lv_obj_add_flag(s_touch_fault_label, LV_OBJ_FLAG_HIDDEN);
 
     s_touch_label = lv_label_create(screen);
     lv_label_set_text(s_touch_label, "Touch: Released  x=--- y=---");
@@ -246,7 +246,8 @@ static void update_page_status(void)
     if (s_touch_label != NULL) lv_label_set_text_fmt(s_touch_label, "Touch: %s  x=%u y=%u",
         s_touch_pressed ? "Pressed" : "Released", (unsigned)s_touch_x, (unsigned)s_touch_y);
     if (s_touch_fault_label != NULL) {
-        lv_obj_set_hidden(s_touch_fault_label, !s_touch_faulted);
+        if (s_touch_faulted) lv_obj_remove_flag(s_touch_fault_label, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(s_touch_fault_label, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -290,6 +291,7 @@ static esp_err_t initialize_ui(void)
     if (err != ESP_OK) return err;
     set_ui_state(s_touch_faulted ? SZPI_UI_TOUCH_FAULT : SZPI_UI_READY, ESP_OK);
     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_UI_READY);
+    ESP_LOGI(TAG, "initial UI refresh completed; backlight=%u%%", (unsigned)s_brightness);
     return ESP_OK;
 }
 
@@ -382,7 +384,9 @@ void szpi_ui_service_task(void *context)
                 ESP_LOGE(TAG, "display entered fault state: %s", esp_err_to_name(display_error));
             }
             uint32_t command = 0;
-            stop_requested = process_ui_command(pdMS_TO_TICKS(UI_LOOP_PERIOD_MS), &command);
+            // The periodic delay below is the sole pacing wait. A second
+            // blocking notification wait would add latency to LVGL timers.
+            stop_requested = process_ui_command(0, &command);
             if ((command & SZPI_UI_CMD_START) != 0) ESP_LOGW(TAG, "ignoring duplicate UI start request");
             if (s_touch_faulted) set_ui_state(SZPI_UI_TOUCH_FAULT, ESP_FAIL);
             vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(UI_LOOP_PERIOD_MS));

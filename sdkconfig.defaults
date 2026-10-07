@@ -20,6 +20,16 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_OFFSET=0x8000
 
-# LVGL 9.6.0~1 is used directly; do not include upstream examples or demos.
+# LVGL 9.5.0 is used directly; do not include upstream examples or demos.
 CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n
+
+# Explicit LVGL 9.5 memory and assertion configuration.
+CONFIG_LV_USE_BUILTIN_MALLOC=y
+CONFIG_LV_MEM_SIZE_KILOBYTES=64
+CONFIG_LV_ASSERT_HANDLER_INCLUDE="assert.h"
+
+# LCD ~60 Hz refresh target, with millisecond task scheduling.
+CONFIG_SZPI_DISPLAY_SPI_CLOCK_HZ=80000000
+CONFIG_LV_DEF_REFR_PERIOD=16
+CONFIG_FREERTOS_HZ=1000

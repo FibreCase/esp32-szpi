@@ -19,19 +19,19 @@
       "inheritDefault": "hidden"
     }
   },
-  "idf.openOcdConfigs": [
-    "board/esp32s3-builtin.cfg"
-  ],
-  "idf.port": "/dev/tty.usbmodem11301",
-  "idf.currentSetup": "/Users/fibrecase/.espressif/v6.1/esp-idf",
-  "idf.customExtraVars": {
-    "IDF_TARGET": "esp32s3"
-  },
-  "clangd.path": "/Users/fibrecase/.espressif/tools/esp-clangd/esp-21.1.3_20260408/esp-clangd/bin/clangd",
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=/Users/fibrecase/Code/esp32-szpi/build"
+    "--compile-commands-dir=/home/fibre/code/esp32-szpi/build"
   ],
-  "idf.flashType": "UART"
+  "clangd.path": "/home/fibre/.espressif/tools/esp-clangd/esp-21.1.3_20260408/esp-clangd/bin/clangd",
+  "idf.currentSetup": "/home/fibre/.espressif/v6.1/esp-idf",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
+  "idf.flashType": "UART",
+  "idf.port": "/dev/ttyACM0"
 }

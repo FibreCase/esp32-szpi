@@ -235,7 +235,7 @@ SW1 为硬件复位键，不可作为普通 GPIO 按键读取。SW2 是 GPIO0 �
 
 | 参数 | 初始值 | 依据 |
 | --- | --- | --- |
-| LCD SPI host / 频率 | SPI2_HOST / 20MHz | 本项目选定的保守起点，后续可测试提高 |
+| LCD SPI host / 频率 | SPI2_HOST / 80MHz | 当前 CONFIG_SZPI_DISPLAY_SPI_CLOCK_HZ 覆盖为 80MHz；board 保守回退值 20MHz，mode 2，稳定性待复测 |
 | SPI mode | 2 | 本板官方例程 |
 | 命令 / 参数位宽 | 8 / 8 | 常规 ST7789 SPI 配置 |
 | 像素格式 / 元素顺序 | RGB565，16bit / RGB | 本板官方例程 |
@@ -249,11 +249,11 @@ SW1 为硬件复位键，不可作为普通 GPIO 按键读取。SW2 是 GPIO0 �
 | 背光资源 | LEDC_TIMER_1、LEDC_CHANNEL_1 | 项目分配，避免与摄像头占用同一通道 |
 | 触摸轮询周期 | 20ms | 项目初始选择，无中断 GPIO |
 
-屏幕初始化时通过扩展器拉低 CS；本 SPI 总线只连接此屏时可保持 CS 为低。ST7789 使用软件复位；完成面板初始化和清屏后，再打开显示及背光。初始缓冲选 RGB565；向屏幕发送时按驱动要求处理字节序，RGB/BGR 元素顺序与 RGB565 高低字节交换是两个不同问题。方向、反色和背光配置依据 [立创 LCD 官方例程](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/lcd-display.html)。
+按本板官方例程，初始化顺序为 CS 保持释放 → `esp_lcd_panel_reset()` → 扩展器拉低 CS → `esp_lcd_panel_init()`；本 SPI 总线只连接此屏时随后可保持 CS 为低。reset GPIO 为 -1，CS 释放期间的驱动软件复位命令不会被面板接收，因此不能把该 API 成功视为面板已完成软件复位；面板依靠板上共用硬件 RESET，不能单独操作共用 RESET。完成面板初始化和清屏后，再打开显示及背光。初始缓冲选 RGB565；向屏幕发送时按驱动要求处理字节序，RGB/BGR 元素顺序与 RGB565 高低字节交换是两个不同问题。方向、反色和背光配置依据 [立创 LCD 官方例程](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/lcd-display.html)。
 
 FT6336 使用地址 0x38、轮询方式。触摸坐标需转换到同一 320×240 横屏坐标系；先读取原始坐标，再用四角触摸确认 swap / mirror 映射，不能只因 LCD 开启 swap_xy 就假定触摸驱动会自动同步。
 
-第二阶段已按上表实现初始配置：SPI2 20MHz / mode 2、GPIO40/41/39、PCA9557 IO0 低有效片选、ST7789 软件复位与 RGB565、LEDC timer1/channel1 背光，以及 FT6336 新 I²C API 轮询。当前触摸变换暂按竖屏原始坐标假设 `x=319-raw_y, y=raw_x`；颜色顺序、方向、边缘、坐标映射、亮度与启停电平尚未上板校准，不能把这些初值视为实测结果。
+第二阶段已按上表实现初始配置：SPI2 80MHz（配置覆盖）/ mode 2、GPIO40/41/39、PCA9557 IO0 低有效片选、ST7789 官方 reset / CS 初始化顺序与 RGB565、LEDC timer1/channel1 背光，以及 FT6336 新 I²C API 轮询。用户确认修正 reset / CS 顺序后屏幕已有显示，反馈触摸相对页面旋转 180°；当前映射改为 `x=raw_y, y=239-raw_x`（原始范围仍按 240×320）。修正后的四角、中心、边缘及交互精度仍待上板验证，颜色、亮度与启停电平未完成验收。
 
 ### GC2145 摄像头
 
@@ -296,3 +296,7 @@ GC2145 的乐鑫驱动实现 RGB565 / YUV422，sensor 表标记不支持原生 J
 - GPIO10/11 是本原理图中明确引到多用外部接口的通用 IO；其他已接外设的引脚只有在相应外设停用且电气连接允许时才考虑复用。
 - 触摸与 IMU 采用轮询，TF 卡没有 CD 检测 GPIO；LCD / 摄像头没有独立复位 GPIO。
 - 先建立共享 I²C 总线及扩展器控制，再初始化依赖它们的屏幕、摄像头与功放；实际有效电平、时序及外设型号按器件手册和实物验证。
+
+LCD 空白屏诊断：`CONFIG_SZPI_DISPLAY_SPI_CLOCK_HZ` 可覆盖板级默认 SPI 频率（0 表示使用默认 20MHz），`CONFIG_SZPI_DISPLAY_SPI_MODE` 默认 2。诊断设置不代表已完成面板校准，进展见 [第二阶段验证](develop/phase_2_validation.md)。
+
+高刷新配置：LVGL `LV_DEF_REFR_PERIOD=16`ms，UI 调度 4ms，FreeRTOS tick 1000Hz；两个内部 DMA 缓冲各 40 行，共 51,200 字节。80MHz 全屏 RGB565 纯像素发送约 15.36ms，不含命令、调度与绘制开销；约 60Hz 为配置目标，实际帧率和高速信号稳定性仍需上板验证。触摸轮询保持 20ms。

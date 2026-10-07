@@ -42,7 +42,7 @@ Wi-Fi 开发期设置通过 `idf.py menuconfig` 中的 **SZPI application** 项�
 
 ## 第二阶段目标
 
-[task_phase_2.md](docs/develop/task_phase_2.md) 跟踪 ST7789 显示、FT6336 触摸、LVGL 和单屏验证 UI。UI 任务由 FreeRTOS runtime 统一创建，页面实现颜色 / 方向标记、点击计数、亮度滑条及触摸状态；固件构建和干净默认配置核对通过。坐标映射、刷新边界等逻辑测试及实物显示 / 触摸校准仍待完成，详见 [验证记录](docs/phase_2_validation.md)。
+[task_phase_2.md](docs/develop/task_phase_2.md) 跟踪 ST7789 显示、FT6336 触摸、LVGL 和单屏验证 UI。UI 任务由 FreeRTOS runtime 统一创建，页面实现颜色 / 方向标记、点击计数、亮度滑条及触摸状态；固件构建和干净默认配置核对通过。坐标映射、刷新边界等逻辑测试及实物显示 / 触摸校准仍待完成，详见 [验证记录](docs/develop/phase_2_validation.md)。
 
 ## 构建与烧录
 
@@ -62,3 +62,11 @@ idf.py -p PORT flash monitor
 - [乐鑫模组数据手册](https://www.espressif.com/sites/default/files/documentation/esp32-s3-wroom-1_wroom-1u_datasheet_en.pdf)
 - [ESP-IDF Flash 与 PSRAM 配置](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/flash_psram_config.html)
 - [ESP-IDF OTA 文档](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/system/ota.html)
+
+LCD 空白屏排查可在 `menuconfig → SZPI display` 覆盖 SPI 频率或模式，记录见 [第二阶段验证](docs/develop/phase_2_validation.md)。
+
+上板进展：用户已确认官方 reset / CS 顺序修正后屏幕可显示；触摸按反馈修正 180° 旋转，待复测。
+
+用户已确认显示和触摸效果正常；启动彩条诊断已移除，启动直接进入验证 UI。
+
+当前高刷新目标：LCD SPI 80MHz、LVGL 16ms 刷新周期，双内部 DMA 缓冲各 40 行；配置与构建不代表实测全屏 60 FPS，高速稳定性及帧率待上板验证。
