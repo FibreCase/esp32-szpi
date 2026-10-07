@@ -24,6 +24,14 @@ static const szpi_board_bindings_t s_bindings = {
     .lcd_mosi = GPIO_NUM_40,
     .lcd_sclk = GPIO_NUM_41,
     .lcd_dc = GPIO_NUM_39,
+    .camera_data = {GPIO_NUM_16, GPIO_NUM_18, GPIO_NUM_8, GPIO_NUM_17,
+                    GPIO_NUM_15, GPIO_NUM_6, GPIO_NUM_4, GPIO_NUM_9},
+    .camera_vsync = GPIO_NUM_3,
+    .camera_href = GPIO_NUM_46,
+    .camera_pclk = GPIO_NUM_7,
+    .camera_xclk = GPIO_NUM_5,
+    .boot_button_gpio = GPIO_NUM_0,
+    .boot_button_active_low = true,
     .i2c_port = I2C_NUM_0,
     .pca9557_address = 0x19,
     .lcd_cs_bit = 0,
@@ -35,6 +43,12 @@ static const szpi_board_bindings_t s_bindings = {
     .backlight_channel = LEDC_CHANNEL_1,
     .backlight_frequency_hz = 5000,
     .backlight_resolution = LEDC_TIMER_10_BIT,
+    .camera_xclk_timer = LEDC_TIMER_0,
+    .camera_xclk_channel = LEDC_CHANNEL_0,
+    .camera_xclk_frequency_hz = 20 * 1000 * 1000,
+    .camera_sccb_address = 0x3C,
+    .camera_pid = 0x2145,
+    .imu_i2c_address = 0x6A,
 };
 static SemaphoreHandle_t s_lock;
 static StaticSemaphore_t s_lock_storage;

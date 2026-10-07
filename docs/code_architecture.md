@@ -4,7 +4,7 @@
 
 本方案针对嘉立创实战派 ESP32-S3、ESP-IDF 6.1，硬件接线及初始参数以 [hardware_io.md](hardware_io.md) 为准。产品功能尚未具体定义，因此先建立显示、输入、摄像头、音频和存储能力的边界，业务功能按实际需求添加。
 
-**第一阶段已实现正式启动、board、runtime 和 Wi-Fi，并记录单次正常联网启动；完整验收尚未完成。第二阶段已实现 ST7789 / FT6336 适配、LVGL 单屏 UI 与 runtime 启停，并通过构建；逻辑测试及板上方向、颜色和触摸校准仍待完成。** 任务与验证记录分别见 [第二阶段任务](develop/task_phase_2.md) 和 [第二阶段验证](develop/phase_2_validation.md)。下文列出的后续功能继续按需求逐步落地，不预先添加空组件、虚假成功的 API 或占位任务。
+**第一阶段已实现正式启动、board、runtime 和 Wi-Fi，并记录单次正常联网启动；完整验收尚未完成。第二阶段已实现 ST7789 / FT6336 适配、LVGL 单屏 UI 与 runtime 启停，并通过构建；逻辑测试及板上方向、颜色和触摸校准仍待完成。第二阶段附加输入已实现 QMI8658A、BOOT 与验证页，并通过主机逻辑测试和 IDF 6.1 构建，仍待上板验证。第三阶段已落下 GC2145 适配和 LVGL 预览代码，依赖及 IDF 6.1 增量 / 干净 defaults 构建通过，逻辑测试和板上验收仍待完成。** 任务与验证记录分别见 [第二阶段任务](develop/task_phase_2.md)、[第二阶段验证](develop/phase_2_validation.md)、[第二阶段附加任务](develop/task_phase_2_extra.md)、[第二阶段附加验证](develop/phase_2_extra_validation.md)、[第三阶段任务](develop/task_phase_3.md) 和 [第三阶段验证](develop/phase_3_validation.md)。下文列出的后续功能继续按需求逐步落地，不预先添加空组件、虚假成功的 API 或占位任务。
 
 ## 分层与依赖
 
@@ -238,3 +238,7 @@ Task Watchdog 由任务在约定的有效进展点自行维护，或用适当的
 硬件事实与默认参数维护在 hardware_io.md；结构与长期规则维护在本文件；AGENTS.md 保留必须遵守的摘要。README 提供使用入口。修改接线、资源分配、接口契约或默认参数时同步相关文档；首次引入新产品功能时补充该功能的数据流、失败策略与验证方法，不预先猜测产品路线。
 
 第二阶段高刷新配置：保持唯一 runtime UI 任务，4ms 周期调度、非阻塞检查命令通知；FreeRTOS tick 为 1000Hz。LVGL 刷新周期 16ms，SPI2 80MHz，两个内部 DMA draw buffer 共 51,200 字节，缓冲归还仍等待完成确认。
+
+第三阶段由 runtime preview 服务与唯一 UI 任务协作，采用单帧 PSRAM camera buffer 和独立 PSRAM staging；UI 完成复制后由采集任务归还 camera 帧，staging 等上一轮 LCD DMA 完成后才覆盖。依赖任务配置和实测限制记录在 [第三阶段验证](develop/phase_3_validation.md)。
+
+第二阶段附加输入实现见 [QMI8658A / BOOT 任务](develop/task_phase_2_extra.md)：驱动与消抖放 szpi_input，固定资源由 board 管理，同一 UI 任务按周期轮询，触摸 / IMU / 按键独立生命周期与故障状态。主机逻辑测试和构建已通过，实物验收未完成。

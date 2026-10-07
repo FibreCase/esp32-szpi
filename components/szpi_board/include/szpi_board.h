@@ -16,6 +16,13 @@ typedef struct {
     gpio_num_t lcd_mosi;
     gpio_num_t lcd_sclk;
     gpio_num_t lcd_dc;
+    gpio_num_t camera_data[8];
+    gpio_num_t camera_vsync;
+    gpio_num_t camera_href;
+    gpio_num_t camera_pclk;
+    gpio_num_t camera_xclk;
+    gpio_num_t boot_button_gpio;
+    bool boot_button_active_low;
     uint8_t i2c_port;
     uint8_t pca9557_address;
     uint8_t lcd_cs_bit;
@@ -27,6 +34,12 @@ typedef struct {
     ledc_channel_t backlight_channel;
     uint32_t backlight_frequency_hz;
     ledc_timer_bit_t backlight_resolution;
+    ledc_timer_t camera_xclk_timer;
+    ledc_channel_t camera_xclk_channel;
+    uint32_t camera_xclk_frequency_hz;
+    uint8_t camera_sccb_address;
+    uint16_t camera_pid;
+    uint8_t imu_i2c_address;
 } szpi_board_bindings_t;
 
 // Bindings are immutable. Keep board initialized while any peripheral uses its bus.

@@ -148,7 +148,7 @@ DAT1（J3.8）未连接，DAT2（J3.1）、DAT3（J3.2）只有上拉，没有�
 
 ### DVP 摄像头
 
-实际摄像头型号为 **GC2145**（用户确认）。后续摄像头驱动需选择支持 GC2145 的实现；GPIO 接线仍以本板原理图为准。
+实际摄像头型号为 **GC2145**（用户确认）。当前适配使用固定版本 espressif/esp32-camera 2.1.8；GPIO 接线仍以本板原理图为准，构建与实物探测结果见[第三阶段验证记录](develop/phase_3_validation.md)。
 
 | camera_config_t 字段 / 功能 | GPIO / 控制 | J6 脚号 |
 | --- | --- | --- |
@@ -215,7 +215,7 @@ SW1 为硬件复位键，不可作为普通 GPIO 按键读取。SW2 是 GPIO0 �
 
 ## 已选定的初始驱动配置
 
-用户已授权采用通用方案并查询资料。以下作为后续编码默认值，查询日期为 **2026-10-07**；尚未上板验证，也尚未在本项目加入这些外设驱动。板级例程中已有的参数优先采用；总线实例、保守频率和缓冲策略是本项目的工程选择，不是所有同型号器件通用的硬件标准。
+用户已授权采用通用方案并查询资料。以下作为编码默认值，查询日期为 **2026-10-07**；相关驱动配置已落代码，但对应外设尚未上板验证。板级例程中已有的参数优先采用；总线实例、保守频率和缓冲策略是本项目的工程选择，不是所有同型号器件通用的硬件标准。
 
 ### I²C 与扩展器启动状态
 
@@ -253,6 +253,12 @@ SW1 为硬件复位键，不可作为普通 GPIO 按键读取。SW2 是 GPIO0 �
 
 FT6336 使用地址 0x38、轮询方式。触摸坐标需转换到同一 320×240 横屏坐标系；先读取原始坐标，再用四角触摸确认 swap / mirror 映射，不能只因 LCD 开启 swap_xy 就假定触摸驱动会自动同步。
 
+### QMI8658A 与 BOOT 输入
+
+QMI8658A 使用共享 board I²C 总线上的 0x6A device handle，100kHz、5ms 单事务超时；驱动复位并核对 WHO_AM_I=0x05 与复位结果，配置 CTRL1 小端自增、±4g / 250Hz 加速度及 ±512dps / 224.2Hz 六轴同步采样。同步读取按 QST QMI8658A Rev A 的 STATUSINT 锁定 / 解锁流程读取 AX_L 起始的 12 字节。加速度使用 8192 LSB/g，陀螺仪 64 LSB/dps；倾角只按静止重力计算 roll / pitch，不提供 yaw。实现与逻辑验证状态见 [第二阶段附加验证记录](develop/phase_2_extra_validation.md)。
+
+SW2 / BOOT 仅由 GPIO0 输入读取，不启用内部上下拉或中断；UI 任务每 4ms 采样，20ms 消抖，稳定按下后 800ms 报告一次长按。GPIO0 启动 / 下载电气行为仍由板载上拉和自动下载电路决定，运行期适配不会驱动该脚。
+
 第二阶段已按上表实现初始配置：SPI2 80MHz（配置覆盖）/ mode 2、GPIO40/41/39、PCA9557 IO0 低有效片选、ST7789 官方 reset / CS 初始化顺序与 RGB565、LEDC timer1/channel1 背光，以及 FT6336 新 I²C API 轮询。用户确认修正 reset / CS 顺序后屏幕已有显示，反馈触摸相对页面旋转 180°；当前映射改为 `x=raw_y, y=239-raw_x`（原始范围仍按 240×320）。修正后的四角、中心、边缘及交互精度仍待上板验证，颜色、亮度与启停电平未完成验收。
 
 ### GC2145 摄像头
@@ -268,13 +274,13 @@ FT6336 使用地址 0x38、轮询方式。触摸坐标需转换到同一 320×24
 | 分辨率 | FRAMESIZE_QVGA，320×240 |
 | 帧缓冲 | CAMERA_FB_IN_PSRAM，fb_count=1，CAMERA_GRAB_WHEN_EMPTY |
 | pin_pwdn / pin_reset | -1 / -1；PWDN 由 PCA9557 IO2 管理 |
-| 镜像 / 翻转 | 先保留驱动默认；上板按安装方向调整 |
+| 镜像 / 翻转 | sensor 保留驱动默认；前置预览在 UI staging 拷贝时水平镜像，不翻转上下方向 |
 
 GC2145 地址 / PID 依据 [乐鑫 sensor.h](https://github.com/espressif/esp32-camera/blob/master/driver/include/sensor.h)。支持开关依据 [乐鑫 camera Kconfig](https://github.com/espressif/esp32-camera/blob/master/Kconfig)。XCLK、缓冲配置的接口参照 [camera 官方说明](https://github.com/espressif/esp32-camera)及 [camera 配置结构](https://github.com/espressif/esp32-camera/blob/master/driver/include/esp_camera.h)。QVGA RGB565 一帧为 153600 字节，先以单缓冲完成采集和屏幕预览，再按吞吐需求考虑双缓冲。
 
 GC2145 的乐鑫驱动实现 RGB565 / YUV422，sensor 表标记不支持原生 JPEG，因此不套用 OV2640 示例中的 PIXFORMAT_JPEG；需要 JPEG 文件时另做软件编码。该驱动的部分图像调节函数是空实现，不能仅凭通用 sensor API 存在就认为全部生效。依据 [GC2145 驱动](https://github.com/espressif/esp32-camera/blob/master/sensors/gc2145.c)及 [sensor 能力表](https://github.com/espressif/esp32-camera/blob/master/driver/sensor.c)。
 
-启动流程：扩展器先保持 PWDN=1；开始初始化摄像头时，板级代码将其拉到 0，并等待 10ms，再调用 esp_camera_init()（驱动建立 XCLK 并执行传感器软件复位 / 寄存器初始化）。10ms 为参照 [乐鑫 camera 探测代码](https://github.com/espressif/esp32-camera/blob/master/driver/esp_camera.c)选定的等待值，不是从原理图推导出的硬件最小时序。驱动会自行执行 GC2145 软件复位后的延时，不重复操作共用 RESET。
+启动流程：扩展器先保持 PWDN=1；开始初始化摄像头时，szpi_camera 通过 board 语义接口将其拉到 0，并等待 10ms，再调用 esp_camera_init()（驱动建立 XCLK 并执行传感器软件复位 / 寄存器初始化）。10ms 为参照 [乐鑫 camera 探测代码](https://github.com/espressif/esp32-camera/blob/v2.1.8/driver/esp_camera.c)选定的等待值，不是从原理图推导出的硬件最小时序。驱动会自行执行 GC2145 软件复位后的延时，不重复操作共用 RESET。停止时驱动 deinit 成功后再通过 board 接口断电。
 
 ### ES7210 / ES8311 音频
 

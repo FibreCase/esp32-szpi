@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "szpi_board.h"
 #include "szpi_display.h"
+#include "szpi_input.h"
 #include "szpi_runtime_internal.h"
 
 #define TAG "szpi_runtime"
@@ -13,6 +14,10 @@
 #define SUPERVISOR_STACK_BYTES 4096
 #define WIFI_STACK_BYTES 4096
 #define UI_STACK_BYTES 6144
+#define PREVIEW_STACK_BYTES 4096
+#define PREVIEW_QUEUE_DEPTH 1
+#define PREVIEW_CMD_START (1U << 0)
+#define PREVIEW_CMD_STOP (1U << 1)
 
 static StaticQueue_t s_wifi_queue_storage;
 static uint8_t s_wifi_queue_buffer[QUEUE_DEPTH * sizeof(wifi_message_t)];
@@ -21,12 +26,19 @@ static uint8_t s_supervisor_queue_buffer[QUEUE_DEPTH * sizeof(uint32_t)];
 static StaticEventGroup_t s_events_storage;
 static StaticSemaphore_t s_status_mutex_storage;
 static StaticSemaphore_t s_ui_status_mutex_storage;
+static StaticSemaphore_t s_preview_status_mutex_storage;
 static StaticTask_t s_supervisor_tcb;
 static StaticTask_t s_wifi_tcb;
 static StaticTask_t s_ui_tcb;
+static StaticTask_t s_preview_tcb;
 static StackType_t s_supervisor_stack[SUPERVISOR_STACK_BYTES / sizeof(StackType_t)];
 static StackType_t s_wifi_stack[WIFI_STACK_BYTES / sizeof(StackType_t)];
 static StackType_t s_ui_stack[UI_STACK_BYTES / sizeof(StackType_t)];
+static StackType_t s_preview_stack[PREVIEW_STACK_BYTES / sizeof(StackType_t)];
+static StaticQueue_t s_preview_frame_queue_storage;
+static uint8_t s_preview_frame_queue_buffer[PREVIEW_QUEUE_DEPTH * sizeof(szpi_preview_frame_message_t)];
+static StaticQueue_t s_preview_ack_queue_storage;
+static uint8_t s_preview_ack_queue_buffer[PREVIEW_QUEUE_DEPTH * sizeof(szpi_preview_ack_message_t)];
 QueueHandle_t szpi_wifi_queue;
 QueueHandle_t szpi_supervisor_queue;
 EventGroupHandle_t szpi_system_events;
@@ -34,6 +46,11 @@ SemaphoreHandle_t szpi_wifi_status_lock;
 szpi_wifi_status_t szpi_wifi_status;
 SemaphoreHandle_t szpi_ui_status_lock;
 szpi_ui_status_t szpi_ui_status;
+QueueHandle_t szpi_preview_frame_queue;
+QueueHandle_t szpi_preview_ack_queue;
+SemaphoreHandle_t szpi_preview_status_lock;
+szpi_camera_preview_status_t szpi_preview_status;
+TaskHandle_t szpi_preview_task_handle;
 static bool s_runtime_started;
 static TaskHandle_t s_supervisor_task_handle;
 static TaskHandle_t s_wifi_task_handle;
@@ -67,6 +84,13 @@ static const runtime_resource_descriptor_t s_resource_table[] = {
     {"wifi_status_mutex", "szpi_app", 1},
     {"ui_status_mutex", "szpi_app", 1},
     {"ui_draw_buffers", "szpi_display", 2U * SZPI_DISPLAY_BUFFER_BYTES},
+    {"preview_frame_queue", "szpi_app", PREVIEW_QUEUE_DEPTH},
+    {"preview_ack_queue", "szpi_app", PREVIEW_QUEUE_DEPTH},
+    {"camera_framebuffer", "szpi_camera", SZPI_CAMERA_FRAME_BYTES},
+    {"preview_staging", "szpi_app_ui", SZPI_CAMERA_FRAME_BYTES},
+    {"imu_i2c_device", "szpi_input (borrowed board I2C)", 1},
+    {"imu_sample_state", "szpi_input", sizeof(szpi_imu_sample_t)},
+    {"boot_gpio_state", "szpi_input", sizeof(szpi_boot_state_t)},
 };
 
 static esp_err_t create_runtime_resources(szpi_wifi_service_state_t initial_wifi_state)
@@ -76,10 +100,17 @@ static esp_err_t create_runtime_resources(szpi_wifi_service_state_t initial_wifi
     szpi_system_events = xEventGroupCreateStatic(&s_events_storage);
     szpi_wifi_status_lock = xSemaphoreCreateMutexStatic(&s_status_mutex_storage);
     szpi_ui_status_lock = xSemaphoreCreateMutexStatic(&s_ui_status_mutex_storage);
+    szpi_preview_frame_queue = xQueueCreateStatic(PREVIEW_QUEUE_DEPTH, sizeof(szpi_preview_frame_message_t),
+        s_preview_frame_queue_buffer, &s_preview_frame_queue_storage);
+    szpi_preview_ack_queue = xQueueCreateStatic(PREVIEW_QUEUE_DEPTH, sizeof(szpi_preview_ack_message_t),
+        s_preview_ack_queue_buffer, &s_preview_ack_queue_storage);
+    szpi_preview_status_lock = xSemaphoreCreateMutexStatic(&s_preview_status_mutex_storage);
     if (szpi_wifi_queue == NULL || szpi_supervisor_queue == NULL || szpi_system_events == NULL ||
-        szpi_wifi_status_lock == NULL || szpi_ui_status_lock == NULL) return ESP_ERR_NO_MEM;
+        szpi_wifi_status_lock == NULL || szpi_ui_status_lock == NULL || szpi_preview_frame_queue == NULL ||
+        szpi_preview_ack_queue == NULL || szpi_preview_status_lock == NULL) return ESP_ERR_NO_MEM;
     szpi_wifi_status = (szpi_wifi_status_t){.state = initial_wifi_state};
     szpi_ui_status = (szpi_ui_status_t){.state = SZPI_UI_STOPPED};
+    szpi_preview_status = (szpi_camera_preview_status_t){.state = SZPI_CAMERA_PREVIEW_STOPPED};
     return ESP_OK;
 }
 
@@ -99,6 +130,7 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
         {"szpi_supervisor", szpi_supervisor_task, SUPERVISOR_STACK_BYTES, 3, tskNO_AFFINITY, true, s_supervisor_stack, &s_supervisor_tcb},
         {"szpi_wifi", szpi_wifi_service_task, WIFI_STACK_BYTES, 4, tskNO_AFFINITY, wifi_enabled && have_config, s_wifi_stack, &s_wifi_tcb},
         {"szpi_ui", szpi_ui_service_task, UI_STACK_BYTES, 5, tskNO_AFFINITY, ui_enabled, s_ui_stack, &s_ui_tcb},
+        {"szpi_preview", szpi_camera_preview_service_task, PREVIEW_STACK_BYTES, 4, tskNO_AFFINITY, ui_enabled, s_preview_stack, &s_preview_tcb},
     };
     for (size_t i = 0; i < sizeof(task_table) / sizeof(task_table[0]); ++i) {
         runtime_task_descriptor_t *task = &task_table[i];
@@ -107,11 +139,17 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
             task->stack_bytes / sizeof(StackType_t), NULL, task->priority,
             task->stack, task->tcb, task->core_id);
         if (handle == NULL) {
-            if (i == 2) {
-                szpi_ui_status.state = SZPI_UI_DISPLAY_FAULT;
-                szpi_ui_status.last_error = ESP_ERR_NO_MEM;
-                xEventGroupSetBits(szpi_system_events, SZPI_EVENT_DISPLAY_FAULT | SZPI_EVENT_UI_STOPPED);
-                ESP_LOGE(TAG, "optional UI task creation failed; continuing without display");
+            if (i == 2 || i == 3) {
+                if (i == 2) {
+                    szpi_ui_status.state = SZPI_UI_DISPLAY_FAULT;
+                    szpi_ui_status.last_error = ESP_ERR_NO_MEM;
+                    xEventGroupSetBits(szpi_system_events, SZPI_EVENT_DISPLAY_FAULT | SZPI_EVENT_UI_STOPPED);
+                } else {
+                    szpi_preview_status.state = SZPI_CAMERA_PREVIEW_UNAVAILABLE;
+                    szpi_preview_status.last_error = ESP_ERR_NO_MEM;
+                    szpi_preview_status.error_count++;
+                }
+                ESP_LOGE(TAG, "%s task creation failed; continuing with available services", task->name);
                 continue;
             }
             if (s_supervisor_task_handle != NULL) {
@@ -126,7 +164,8 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
         }
         if (i == 0) s_supervisor_task_handle = handle;
         else if (i == 1) s_wifi_task_handle = handle;
-        else s_ui_task_handle = handle;
+        else if (i == 2) s_ui_task_handle = handle;
+        else szpi_preview_task_handle = handle;
     }
     return ESP_OK;
 }
@@ -306,6 +345,63 @@ esp_err_t szpi_app_ui_get_status(szpi_ui_status_t *status)
     if (xSemaphoreTake(szpi_ui_status_lock, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
     *status = szpi_ui_status;
     xSemaphoreGive(szpi_ui_status_lock);
+    return ESP_OK;
+}
+
+esp_err_t szpi_app_camera_preview_start(void)
+{
+    if (!s_runtime_started || !s_ui_enabled || szpi_preview_task_handle == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(szpi_preview_status_lock, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    szpi_camera_preview_state_t state = szpi_preview_status.state;
+    bool frame_outstanding = szpi_preview_status.frame_outstanding;
+    xSemaphoreGive(szpi_preview_status_lock);
+    if (state != SZPI_CAMERA_PREVIEW_STOPPED && state != SZPI_CAMERA_PREVIEW_FAULT &&
+        state != SZPI_CAMERA_PREVIEW_UNAVAILABLE) return ESP_ERR_INVALID_STATE;
+    if (state == SZPI_CAMERA_PREVIEW_FAULT && frame_outstanding) return ESP_ERR_INVALID_STATE;
+    xEventGroupClearBits(szpi_system_events, SZPI_EVENT_PREVIEW_STOPPED);
+    return xTaskNotify(szpi_preview_task_handle, PREVIEW_CMD_START, eSetBits) == pdPASS ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t szpi_app_camera_preview_stop(TickType_t timeout_ticks)
+{
+    if (!s_runtime_started || szpi_preview_task_handle == NULL) return ESP_ERR_INVALID_STATE;
+    if (timeout_ticks > pdMS_TO_TICKS(5000)) timeout_ticks = pdMS_TO_TICKS(5000);
+    if (xSemaphoreTake(szpi_preview_status_lock, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    szpi_camera_preview_state_t state = szpi_preview_status.state;
+    bool frame_outstanding = szpi_preview_status.frame_outstanding;
+    xSemaphoreGive(szpi_preview_status_lock);
+    if (state == SZPI_CAMERA_PREVIEW_STOPPED || state == SZPI_CAMERA_PREVIEW_UNAVAILABLE ||
+        (state == SZPI_CAMERA_PREVIEW_FAULT && !frame_outstanding)) return ESP_OK;
+    xEventGroupClearBits(szpi_system_events, SZPI_EVENT_PREVIEW_STOPPED);
+    if (xTaskNotify(szpi_preview_task_handle, PREVIEW_CMD_STOP, eSetBits) != pdPASS) return ESP_FAIL;
+    EventBits_t bits = xEventGroupWaitBits(szpi_system_events, SZPI_EVENT_PREVIEW_STOPPED,
+        pdTRUE, pdTRUE, timeout_ticks);
+    if ((bits & SZPI_EVENT_PREVIEW_STOPPED) == 0) return ESP_ERR_TIMEOUT;
+    if (xSemaphoreTake(szpi_preview_status_lock, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    state = szpi_preview_status.state;
+    esp_err_t last_error = szpi_preview_status.last_error;
+    xSemaphoreGive(szpi_preview_status_lock);
+    return state == SZPI_CAMERA_PREVIEW_STOPPED ? ESP_OK : (last_error != ESP_OK ? last_error : ESP_FAIL);
+}
+
+esp_err_t szpi_app_camera_preview_request_stop(void)
+{
+    if (!s_runtime_started || szpi_preview_task_handle == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(szpi_preview_status_lock, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    szpi_camera_preview_state_t state = szpi_preview_status.state;
+    bool frame_outstanding = szpi_preview_status.frame_outstanding;
+    xSemaphoreGive(szpi_preview_status_lock);
+    if (state == SZPI_CAMERA_PREVIEW_STOPPED || state == SZPI_CAMERA_PREVIEW_UNAVAILABLE ||
+        (state == SZPI_CAMERA_PREVIEW_FAULT && !frame_outstanding)) return ESP_OK;
+    return xTaskNotify(szpi_preview_task_handle, PREVIEW_CMD_STOP, eSetBits) == pdPASS ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t szpi_app_camera_preview_get_status(szpi_camera_preview_status_t *status)
+{
+    if (status == NULL || szpi_preview_status_lock == NULL) return ESP_ERR_INVALID_ARG;
+    if (xSemaphoreTake(szpi_preview_status_lock, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    *status = szpi_preview_status;
+    xSemaphoreGive(szpi_preview_status_lock);
     return ESP_OK;
 }
 

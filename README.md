@@ -70,3 +70,11 @@ LCD 空白屏排查可在 `menuconfig → SZPI display` 覆盖 SPI 频率或模�
 用户已确认显示和触摸效果正常；启动彩条诊断已移除，启动直接进入验证 UI。
 
 当前高刷新目标：LCD SPI 80MHz、LVGL 16ms 刷新周期，双内部 DMA 缓冲各 40 行；配置与构建不代表实测全屏 60 FPS，高速稳定性及帧率待上板验证。
+
+## 第三阶段：camera 与预览
+
+[task_phase_3.md](docs/develop/task_phase_3.md) 跟踪 GC2145 适配、QVGA RGB565 采集及 LVGL 预览；代码已实现 board camera bindings、相机组件、runtime 预览服务及可进入 / 退出的预览页。依赖构建与实物验收状态见[验证记录](docs/develop/phase_3_validation.md)。
+
+## 第二阶段附加任务
+
+[QMI8658A 与 BOOT 按键](docs/develop/task_phase_2_extra.md) 已实现六轴采集、静态倾角、按键消抖及输入验证页，复用 board I²C 并由唯一 UI 任务轮询；构建和主机逻辑测试通过，实物验证见[记录](docs/develop/phase_2_extra_validation.md)。

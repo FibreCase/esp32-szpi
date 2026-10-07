@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "szpi_wifi.h"
+#include "szpi_camera.h"
 
 typedef enum {
     SZPI_WIFI_DISABLED,
@@ -55,6 +56,31 @@ typedef struct {
     esp_err_t last_error;
 } szpi_ui_status_t;
 
+typedef enum {
+    SZPI_CAMERA_PREVIEW_UNAVAILABLE,
+    SZPI_CAMERA_PREVIEW_STOPPED,
+    SZPI_CAMERA_PREVIEW_STARTING,
+    SZPI_CAMERA_PREVIEW_RUNNING,
+    SZPI_CAMERA_PREVIEW_STOPPING,
+    SZPI_CAMERA_PREVIEW_FAULT,
+} szpi_camera_preview_state_t;
+
+typedef struct {
+    szpi_camera_preview_state_t state;
+    uint16_t sensor_pid;
+    bool frame_outstanding;
+    uint32_t captured_frames;
+    uint32_t displayed_frames;
+    uint32_t dropped_frames;
+    uint32_t error_count;
+    uint32_t capture_fps_milli;
+    uint32_t display_fps_milli;
+    uint32_t max_capture_us;
+    uint32_t max_copy_us;
+    uint32_t max_refresh_us;
+    esp_err_t last_error;
+} szpi_camera_preview_status_t;
+
 // Call once after NVS and board initialization. Creates all enabled project tasks.
 esp_err_t szpi_app_runtime_start(const szpi_wifi_config_t *wifi_config, bool wifi_enabled, bool ui_enabled);
 // Starts only diagnostics after a core boot failure; never publishes SYSTEM_READY.
@@ -69,4 +95,8 @@ esp_err_t szpi_app_wifi_get_status(szpi_wifi_status_t *status);
 esp_err_t szpi_app_ui_start(void);
 esp_err_t szpi_app_ui_stop(TickType_t timeout_ticks);
 esp_err_t szpi_app_ui_get_status(szpi_ui_status_t *status);
+esp_err_t szpi_app_camera_preview_start(void);
+esp_err_t szpi_app_camera_preview_request_stop(void);
+esp_err_t szpi_app_camera_preview_stop(TickType_t timeout_ticks);
+esp_err_t szpi_app_camera_preview_get_status(szpi_camera_preview_status_t *status);
 EventGroupHandle_t szpi_app_get_system_events(void);

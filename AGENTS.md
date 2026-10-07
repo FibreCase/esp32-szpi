@@ -9,6 +9,10 @@
 - 第二阶段范围与验收见 `docs/develop/task_phase_2.md`：ST7789、FT6336、LVGL 与单屏验证 UI。LVGL 绑定在 szpi_display，页面在 szpi_app；唯一 UI 任务由 runtime 创建，遵守 DMA 完成与缓冲归还规则。实现和构建已完成，逻辑测试与上板校准仍待完成，见 `docs/develop/phase_2_validation.md`。
 - 第一阶段代码已落在启动装配、`szpi_board`、`szpi_app` 与 `szpi_wifi`；ESP-IDF 6.1 构建通过。逻辑测试与板上验收状态见 `docs/phase_1_validation.md`。规划中的后续组件仍按需求逐步创建，不把计划当成已实现，不添加空组件、占位任务或虚假成功接口。
 
+- 第三阶段实现见 `docs/develop/task_phase_3.md` 与 `docs/develop/phase_3_validation.md`：GC2145 camera、QVGA RGB565 与 LVGL 预览已落代码，IDF 6.1 增量及干净 defaults 构建通过；逻辑测试和上板验证待完成。保持共享新 I²C、单帧 PSRAM、runtime 预览任务与明确的帧 / staging 所有权。
+
+- 第二阶段附加任务见 `docs/develop/task_phase_2_extra.md` 与 `docs/develop/phase_2_extra_validation.md`：QMI8658A 与 BOOT 按键已实现并通过 IDF 6.1 构建和主机逻辑测试；仍待板上验证。适配归属 szpi_input，复用 board 新 I²C，由唯一 UI 任务轮询，独立故障降级。
+
 ## 结构与边界
 
 - 依赖方向：`main -> szpi_app -> 外设适配 -> szpi_board`；各层可使用所需 ESP-IDF / 供应商库，禁止循环依赖。
