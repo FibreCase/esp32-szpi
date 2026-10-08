@@ -35,6 +35,7 @@ typedef struct {
     uint32_t sys_evt_stack_min_bytes;
     bool has_config;
     char ssid[33];
+    char hostname[SZPI_WIFI_HOSTNAME_MAX + 1];
     szpi_provision_status_t provisioning;
 } szpi_wifi_status_t;
 
@@ -121,6 +122,10 @@ esp_err_t szpi_app_wifi_start(void);
 // Sends cooperative STOP and waits for driver stop confirmation up to timeout_ticks.
 esp_err_t szpi_app_wifi_stop(TickType_t timeout_ticks);
 esp_err_t szpi_app_wifi_retry(void);
+// Enqueues a Wi-Fi-owner update; accepts a DNS hostname of 1..32 ASCII letters,
+// digits or hyphens (without a leading or trailing hyphen), persists it to NVS,
+// and applies it to DHCP and mDNS. An active provisioning session rejects updates.
+esp_err_t szpi_app_wifi_set_hostname(const char *hostname);
 // Copies a consistent snapshot; RSSI is queried from the Wi-Fi driver when online.
 esp_err_t szpi_app_wifi_get_status(szpi_wifi_status_t *status);
 esp_err_t szpi_app_ui_start(void);

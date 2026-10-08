@@ -2,9 +2,11 @@
 
 ## 实现与边界
 
-2026-10-08：已实现 NVS 启动、DPP Enrollee、WPA2 SoftAP、DNS wildcard、gzip 单 HTML portal 与 Settings → Network 页面。固件与 Linux simulator 的验收分开记录；编译和主机测试不代表手机 / 板上配网已验收。
+2026-10-08：已实现 NVS 启动、DPP Enrollee、WPA2 SoftAP、DNS wildcard、gzip 单 HTML portal、STA mDNS 主机名与 Settings → Network 页面。固件与 Linux simulator 的验收分开记录；编译和主机测试不代表手机 / 板上配网已验收。
 
 `main` 在 NVS、board 就绪后启动 runtime，不再接收编译进固件的 SSID / 密码。`szpi_app/wifi_service` 是唯一 Wi-Fi 状态机与持久化操作入口；`szpi_wifi` 拥有 STA/AP netif、驱动、事件、DPP、DNS socket 与 HTTP server。共享 `szpi_ui` 仅接收模型和发出 begin/cancel/forget 事件，无 ESP-IDF / 网络 / NVS 依赖。`szpi_app_runtime_start(bool wifi_enabled, bool ui_enabled)` 的 Wi-Fi 任务只取决于启用开关，无配置也会创建。
+
+STA 的 DHCP hostname 与 mDNS hostname 从同一个设置读取，默认 `szpi`，mDNS 地址为 `szpi.local`；设置存于 NVS namespace `szpi_wifi`、key `hostname`，最多 32 个 ASCII 字母、数字或连字符，首尾不能为连字符。`szpi_app_wifi_set_hostname()` 将更新排入 Wi-Fi owner task，持久化后同时应用到 DHCP 与 mDNS；STA 已连接时会重连以使用新 DHCP hostname，配网会话期间拒绝更新。当前状态快照包含 hostname。mDNS 实例名为 `SZ-PI`，不注册未实际运行的服务记录。`szpi_wifi` 创建 STA netif 时设置 DHCP hostname，Wi-Fi owner 在 STA/AP 启动前初始化 Espressif `espressif/mdns` `==1.12.0`，确保接收到后续 netif 事件；Wi-Fi 服务停止时释放 mDNS。组件内部 mDNS task 由依赖管理，不由 runtime 重复创建；当前配置为 4096 字节栈、优先级 1、固定 CPU0，任务及其内存均使用内部 RAM。
 
 支持 2.4GHz WPA2-PSK、WPA3-SAE 与 WPA2/WPA3 transition；隐藏 SSID 可以手输。开放、WEP、企业 EAP 和 DPP connector-only AP 不在本次范围。SSID 为 1–32 字节，密码为 8–63 字节或 WPA2 的 64 位 hex PSK；不支持 SSID / 密码中的 NUL、控制字符。界面按项目规则嵌入 ASCII Noto Sans，非 ASCII SSID 在网页可显示，在 LCD 可能缺字。
 

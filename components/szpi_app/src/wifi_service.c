@@ -5,6 +5,7 @@
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "mdns.h"
 #include "esp_wifi.h"
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
@@ -17,6 +18,8 @@
 #define SUCCESS_GRACE_US (5000000LL)
 
 static bool s_initialized, s_started, s_sntp_initialized;
+static bool s_mdns_initialized;
+static char s_hostname[SZPI_WIFI_HOSTNAME_MAX + 1] = SZPI_WIFI_HOSTNAME_DEFAULT;
 static bool s_have_config, s_testing, s_disconnect_pending, s_link_seen;
 static bool s_scan_resume_dpp, s_accept_dpp, s_dpp_selected;
 static szpi_wifi_config_t s_saved, s_candidate;
@@ -67,6 +70,7 @@ static void publish(void)
         szpi_wifi_status.attempts = s_attempts;
         szpi_wifi_status.has_config = s_have_config;
         memcpy(szpi_wifi_status.ssid, s_saved.ssid, sizeof(szpi_wifi_status.ssid));
+        memcpy(szpi_wifi_status.hostname, s_hostname, sizeof(szpi_wifi_status.hostname));
         szpi_wifi_status.provisioning = s_prov;
         if (s_state != SZPI_WIFI_ONLINE) {
             memset(&szpi_wifi_status.ip_info, 0, sizeof(szpi_wifi_status.ip_info));
@@ -146,7 +150,26 @@ static esp_err_t ensure_driver(void)
     esp_err_t err = ESP_OK;
     if (!s_initialized) {
         err = szpi_wifi_init(NULL, szpi_wifi_post_event, NULL);
-        if (err == ESP_OK) s_initialized = true;
+        if (err == ESP_OK) {
+            s_initialized = true;
+            err = szpi_wifi_get_hostname(s_hostname);
+        }
+    }
+    if (err == ESP_OK && !s_mdns_initialized) {
+        esp_err_t mdns_err = mdns_init();
+        if (mdns_err == ESP_OK) {
+            mdns_err = mdns_hostname_set(s_hostname);
+            if (mdns_err == ESP_OK) mdns_err = mdns_instance_name_set("SZ-PI");
+            if (mdns_err == ESP_OK) {
+                s_mdns_initialized = true;
+                ESP_LOGI(TAG, "Wi-Fi hostname configured: %s.local", s_hostname);
+            } else {
+                mdns_free();
+                ESP_LOGW(TAG, "mDNS hostname configuration failed: %s", esp_err_to_name(mdns_err));
+            }
+        } else {
+            ESP_LOGW(TAG, "mDNS initialization failed: %s", esp_err_to_name(mdns_err));
+        }
     }
     if (err == ESP_OK && !s_started) {
         err = szpi_wifi_start();
@@ -383,6 +406,7 @@ static void event_received(const szpi_wifi_event_t *event)
             xSemaphoreGive(szpi_wifi_status_lock);
         }
         if (!s_prov.active) start_time_sync();
+        if (s_mdns_initialized) ESP_LOGI(TAG, "Wi-Fi hostname available as %s.local", s_hostname);
     } else if (event->id == SZPI_WIFI_EVENT_DISCONNECTED || event->id == SZPI_WIFI_EVENT_LOST_IP) {
         ESP_LOGW(TAG, "STA link lost: event=%d reason=%d candidate=%d", event->id, event->disconnect_reason, s_testing);
         if (xSemaphoreTake(szpi_wifi_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -411,6 +435,10 @@ static void event_received(const szpi_wifi_event_t *event)
 static void stop_driver(void)
 {
     if (s_prov.active) close_session(false);
+    if (!s_prov.active && s_mdns_initialized) {
+        mdns_free();
+        s_mdns_initialized = false;
+    }
     esp_err_t err = s_prov.active ? ESP_ERR_INVALID_STATE : (s_started ? szpi_wifi_stop() : ESP_OK);
     if (err == ESP_OK) s_started = false;
     s_deadline = s_retry_at = 0;
@@ -418,6 +446,35 @@ static void stop_driver(void)
     s_last_error = err;
     publish();
     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_WIFI_STOPPED);
+}
+
+static void set_hostname(const char *hostname)
+{
+    char previous[SZPI_WIFI_HOSTNAME_MAX + 1];
+    if (!szpi_wifi_hostname_valid(hostname) || szpi_wifi_get_hostname(previous) != ESP_OK) return;
+    if (s_prov.active) {
+        ESP_LOGW(TAG, "hostname update rejected while provisioning is active");
+        return;
+    }
+    bool reconnect = s_started && s_have_config;
+
+    esp_err_t err = szpi_wifi_set_hostname(hostname);
+    if (err == ESP_OK && s_mdns_initialized) err = mdns_hostname_set(hostname);
+    if (err == ESP_OK) err = szpi_wifi_save_hostname(hostname);
+    if (err != ESP_OK) {
+        (void)szpi_wifi_set_hostname(previous);
+        if (s_mdns_initialized) (void)mdns_hostname_set(previous);
+        ESP_LOGW(TAG, "hostname update failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    memcpy(s_hostname, hostname, strlen(hostname) + 1);
+    ESP_LOGI(TAG, "hostname updated: %s.local", s_hostname);
+    if (reconnect) {
+        stop_driver();
+        if (s_state == SZPI_WIFI_STOPPED) saved_round();
+    }
+    publish();
 }
 
 void szpi_wifi_service_task(void *context)
@@ -482,6 +539,7 @@ void szpi_wifi_service_task(void *context)
                     publish();
                 }
                 break;
+            case WIFI_MSG_SET_HOSTNAME: set_hostname(message.hostname); break;
             case WIFI_MSG_EVENT: event_received(&message.event); break;
             default: break;
             }

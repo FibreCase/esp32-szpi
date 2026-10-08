@@ -8,6 +8,54 @@ typedef struct {
     szpi_wifi_config_t config;
 } wifi_saved_t;
 
+bool szpi_wifi_hostname_valid(const char *hostname)
+{
+    if (hostname == NULL) return false;
+    size_t length = strnlen(hostname, SZPI_WIFI_HOSTNAME_MAX + 1);
+    if (length == 0 || length > SZPI_WIFI_HOSTNAME_MAX || hostname[0] == '-' || hostname[length - 1] == '-') return false;
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)hostname[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '-')) return false;
+    }
+    return true;
+}
+
+esp_err_t szpi_wifi_load_hostname(char hostname[SZPI_WIFI_HOSTNAME_MAX + 1])
+{
+    if (hostname == NULL) return ESP_ERR_INVALID_ARG;
+    memset(hostname, 0, SZPI_WIFI_HOSTNAME_MAX + 1);
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open("szpi_wifi", NVS_READONLY, &nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        memcpy(hostname, SZPI_WIFI_HOSTNAME_DEFAULT, sizeof(SZPI_WIFI_HOSTNAME_DEFAULT));
+        return ESP_OK;
+    }
+    if (err != ESP_OK) return err;
+    size_t size = SZPI_WIFI_HOSTNAME_MAX + 1;
+    err = nvs_get_str(nvs, "hostname", hostname, &size);
+    nvs_close(nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        memcpy(hostname, SZPI_WIFI_HOSTNAME_DEFAULT, sizeof(SZPI_WIFI_HOSTNAME_DEFAULT));
+        return ESP_OK;
+    }
+    if (err == ESP_OK && !szpi_wifi_hostname_valid(hostname)) err = ESP_ERR_INVALID_RESPONSE;
+    if (err != ESP_OK) memset(hostname, 0, SZPI_WIFI_HOSTNAME_MAX + 1);
+    return err;
+}
+
+esp_err_t szpi_wifi_save_hostname(const char *hostname)
+{
+    if (!szpi_wifi_hostname_valid(hostname)) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open("szpi_wifi", NVS_READWRITE, &nvs);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(nvs, "hostname", hostname);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    return err;
+}
+
 esp_err_t szpi_wifi_load_config(szpi_wifi_config_t *config)
 {
     if (!config) return ESP_ERR_INVALID_ARG;

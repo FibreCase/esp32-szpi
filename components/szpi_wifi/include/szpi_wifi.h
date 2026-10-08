@@ -7,6 +7,8 @@
 
 #define SZPI_WIFI_SSID_MAX 32
 #define SZPI_WIFI_PASSWORD_MAX 64
+#define SZPI_WIFI_HOSTNAME_MAX 32
+#define SZPI_WIFI_HOSTNAME_DEFAULT "szpi"
 
 typedef struct {
     char ssid[SZPI_WIFI_SSID_MAX + 1];
@@ -48,6 +50,11 @@ esp_err_t szpi_wifi_disconnect(void);
 esp_err_t szpi_wifi_stop(void);
 esp_err_t szpi_wifi_deinit(void);
 esp_err_t szpi_wifi_get_rssi(int8_t *rssi);
+bool szpi_wifi_hostname_valid(const char *hostname);
+esp_err_t szpi_wifi_load_hostname(char hostname[SZPI_WIFI_HOSTNAME_MAX + 1]);
+esp_err_t szpi_wifi_save_hostname(const char *hostname);
+esp_err_t szpi_wifi_set_hostname(const char *hostname);
+esp_err_t szpi_wifi_get_hostname(char hostname[SZPI_WIFI_HOSTNAME_MAX + 1]);
 
 typedef struct {
     bool mac_valid;

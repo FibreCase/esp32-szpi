@@ -103,6 +103,7 @@ typedef struct {
 static const runtime_resource_descriptor_t s_resource_table[] = {
     {"supervisor_queue", "szpi_app", QUEUE_DEPTH},
     {"wifi_queue", "szpi_app", QUEUE_DEPTH},
+    {"mdns_dependency_task", "espressif/mdns", 1},
     {"system_events", "szpi_app", 0},
     {"wifi_status_mutex", "szpi_app", 1},
     {"ui_status_mutex", "szpi_app", 1},
@@ -344,6 +345,19 @@ esp_err_t szpi_app_wifi_retry(void)
     if (xQueueSend(szpi_wifi_queue, &message, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
     szpi_runtime_record_queue_peaks();
     return ESP_OK;
+}
+
+esp_err_t szpi_app_wifi_set_hostname(const char *hostname)
+{
+    if (!szpi_wifi_hostname_valid(hostname)) return ESP_ERR_INVALID_ARG;
+    if (!s_wifi_task_handle || !szpi_wifi_queue) return ESP_ERR_INVALID_STATE;
+    szpi_wifi_status_t status;
+    esp_err_t err = szpi_app_wifi_get_status(&status);
+    if (err != ESP_OK) return err;
+    if (status.provisioning.active) return ESP_ERR_INVALID_STATE;
+    wifi_message_t message = {.kind = WIFI_MSG_SET_HOSTNAME};
+    memcpy(message.hostname, hostname, strlen(hostname) + 1);
+    return xQueueSend(szpi_wifi_queue, &message, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t szpi_app_wifi_get_status(szpi_wifi_status_t *status)

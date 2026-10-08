@@ -26,7 +26,7 @@
 #define SZPI_UI_CMD_STOP (1U << 0)
 #define SZPI_UI_CMD_START (1U << 1)
 
-typedef enum { WIFI_MSG_START, WIFI_MSG_STOP, WIFI_MSG_RETRY, WIFI_MSG_EVENT, WIFI_MSG_DIAGNOSTIC, WIFI_MSG_PROVISION, WIFI_MSG_CANCEL, WIFI_MSG_FORGET, WIFI_MSG_SUBMIT, WIFI_MSG_SCAN } wifi_message_kind_t;
+typedef enum { WIFI_MSG_START, WIFI_MSG_STOP, WIFI_MSG_RETRY, WIFI_MSG_EVENT, WIFI_MSG_DIAGNOSTIC, WIFI_MSG_PROVISION, WIFI_MSG_CANCEL, WIFI_MSG_FORGET, WIFI_MSG_SUBMIT, WIFI_MSG_SCAN, WIFI_MSG_SET_HOSTNAME } wifi_message_kind_t;
 typedef struct {
     wifi_message_kind_t kind;
     TaskHandle_t waiter;
@@ -34,6 +34,7 @@ typedef struct {
     bool use_dpp;
     uint32_t request_id;
     szpi_wifi_config_t config;
+    char hostname[SZPI_WIFI_HOSTNAME_MAX + 1];
     szpi_wifi_event_t event;
 } wifi_message_t;
 

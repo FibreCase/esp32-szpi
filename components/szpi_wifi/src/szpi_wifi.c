@@ -16,12 +16,14 @@
 #include "esp_netif.h"
 #include "esp_wifi_default.h"
 #include "esp_wifi.h"
+#include "nvs.h"
 #include "szpi_wifi.h"
 
 #define TAG "szpi_wifi"
 
 static esp_netif_t *s_netif;
 static esp_netif_t *s_ap_netif;
+static char s_hostname[SZPI_WIFI_HOSTNAME_MAX + 1] = SZPI_WIFI_HOSTNAME_DEFAULT;
 static bool s_dpp_initialized;
 static atomic_uint s_generation;
 /* Default-loop events publish association state to read-only status queries. */
@@ -181,6 +183,15 @@ esp_err_t szpi_wifi_init(const szpi_wifi_config_t *config, szpi_wifi_event_sink_
     if (err != ESP_OK) goto fail;
     s_netif = esp_netif_create_default_wifi_sta();
     if (s_netif == NULL) { err = ESP_ERR_NO_MEM; goto fail; }
+    err = szpi_wifi_load_hostname(s_hostname);
+    if (err == ESP_ERR_INVALID_RESPONSE || err == ESP_ERR_NVS_INVALID_LENGTH) {
+        ESP_LOGW(TAG, "stored hostname is invalid; using default");
+        memcpy(s_hostname, SZPI_WIFI_HOSTNAME_DEFAULT, sizeof(SZPI_WIFI_HOSTNAME_DEFAULT));
+        err = ESP_OK;
+    }
+    if (err != ESP_OK) goto fail;
+    err = esp_netif_set_hostname(s_netif, s_hostname);
+    if (err != ESP_OK) goto fail;
     wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&init_config);
     if (err != ESP_OK) goto fail;
@@ -252,6 +263,24 @@ esp_err_t szpi_wifi_get_rssi(int8_t *rssi)
     esp_err_t err = esp_wifi_sta_get_ap_info(&ap);
     if (err == ESP_OK) *rssi = ap.rssi;
     return err;
+}
+
+esp_err_t szpi_wifi_set_hostname(const char *hostname)
+{
+    if (!szpi_wifi_hostname_valid(hostname)) return ESP_ERR_INVALID_ARG;
+    if (s_netif != NULL) {
+        esp_err_t err = esp_netif_set_hostname(s_netif, hostname);
+        if (err != ESP_OK) return err;
+    }
+    memcpy(s_hostname, hostname, strlen(hostname) + 1);
+    return ESP_OK;
+}
+
+esp_err_t szpi_wifi_get_hostname(char hostname[SZPI_WIFI_HOSTNAME_MAX + 1])
+{
+    if (hostname == NULL) return ESP_ERR_INVALID_ARG;
+    memcpy(hostname, s_hostname, sizeof(s_hostname));
+    return ESP_OK;
 }
 
 esp_err_t szpi_wifi_get_link_info(szpi_wifi_link_info_t *info)
