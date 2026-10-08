@@ -73,8 +73,12 @@
 
 ## 80MHz 与约 60Hz 刷新目标
 
+- 新增 Display → FPS / Tearing 主动测试页面与最后一块 DMA 完成计帧的统计接口；测试不改变显示频率、缓冲尺寸或单个在途传输规则。计时 ISR 仅写时间并沿用原 semaphore，UI 任务采样并每秒打印一次。口径及资源见 [显示性能测试](display_performance_test.md)，真实板上 FPS 与撕裂情况仍待测。
+
 - 按用户要求设置 SPI2 80MHz / mode 2（显式 CONFIG 覆盖，board 20MHz 回退值保留），LVGL 刷新周期 16ms。配置同时写入 sdkconfig.defaults 并同步本地 sdkconfig。
 - FreeRTOS tick 从 100Hz 改为 1000Hz，UI 使用 4ms 的 xTaskDelayUntil 调度，通知仅非阻塞读取，避免额外等待；保留 runtime 唯一 UI 任务，触摸轮询仍为 20ms。
 - 两个内部 DMA buffer 各从 20 行增至 40 行，总共 51,200 字节；保持单个在途刷新及 DMA 完成后缓冲归还规则，全屏分块从 12 减至 6。
 - 16ms 是约 60Hz 的刷新调度目标，不是实测 FPS。80MHz 全屏像素传输理论耗时 15.36ms，实际还包含命令、绘制和调度；全屏动画帧率、80MHz 稳定性与长期运行仍待上板测量。
 - 本配置执行 `idf.py build` 通过；生成头文件核对 SPI 80,000,000Hz、LVGL 16ms、FreeRTOS 1000Hz。应用镜像 `0x11af20` bytes，OTA 余量 `0x6d50e0` bytes（约 86%）。未烧录或测量实际 FPS。
+
+60 行双 DMA 缓冲因第二块连续空间不足上板初始化失败后，将 LVGL 内置 64KiB 静态对象池迁至 PSRAM BSS；DMA 双缓冲仍在内部 RAM，调整后的上板分配与性能待验收。

@@ -8,6 +8,8 @@
 
 typedef enum {
     SZPI_UI_EVENT_PRIMARY_ACTION = 1,
+    SZPI_UI_EVENT_DISPLAY_TEST_START,
+    SZPI_UI_EVENT_DISPLAY_TEST_STOP,
 } szpi_ui_event_t;
 
 typedef enum {
@@ -26,6 +28,13 @@ typedef struct {
     bool network_connected;
     bool time_valid;
     char time_text[6];
+    bool display_test_supported;
+    bool display_test_valid;
+    uint32_t display_fps_x10;
+    uint32_t display_frame_avg_us;
+    uint32_t display_frame_max_us;
+    uint32_t display_lvgl_avg_us;
+    uint32_t display_gap_avg_us;
 } szpi_ui_model_t;
 
 typedef void (*szpi_ui_event_cb_t)(szpi_ui_event_t event, void *context);

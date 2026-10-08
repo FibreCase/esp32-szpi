@@ -51,6 +51,11 @@ static void set_ui_state(szpi_ui_state_t state, esp_err_t error)
 static void primary_action_cb(szpi_ui_event_t event, void *context)
 {
     (void)context;
+    if (event == SZPI_UI_EVENT_DISPLAY_TEST_START || event == SZPI_UI_EVENT_DISPLAY_TEST_STOP) {
+        esp_err_t err = szpi_display_set_test_active(event == SZPI_UI_EVENT_DISPLAY_TEST_START);
+        if (err != ESP_OK) ESP_LOGW(TAG, "display test state failed: %s", esp_err_to_name(err));
+        return;
+    }
     if (event != SZPI_UI_EVENT_PRIMARY_ACTION) return;
     s_click_count++;
     if (szpi_ui_status_lock == NULL) return;
@@ -202,6 +207,16 @@ static void update_ui_model(void)
         .time_valid = time_valid,
     };
     memcpy(model.time_text, time_text, sizeof(model.time_text));
+    szpi_display_test_stats_t stats = {0};
+    model.display_test_supported = true;
+    if (szpi_display_get_test_stats(&stats) == ESP_OK) {
+        model.display_test_valid = stats.valid;
+        model.display_fps_x10 = stats.fps_x10;
+        model.display_frame_avg_us = stats.frame_avg_us;
+        model.display_frame_max_us = stats.frame_max_us;
+        model.display_lvgl_avg_us = stats.lvgl_avg_us;
+        model.display_gap_avg_us = stats.gap_avg_us;
+    }
     if (szpi_ui_status_lock != NULL && xSemaphoreTake(szpi_ui_status_lock, 0) == pdTRUE) {
         szpi_ui_status.click_count = s_click_count;
         xSemaphoreGive(szpi_ui_status_lock);

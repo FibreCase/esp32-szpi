@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
@@ -14,6 +15,7 @@
 #include "freertos/semphr.h"
 #include "szpi_board.h"
 #include "szpi_display.h"
+#include "src/draw/sw/lv_draw_sw_utils.h"
 
 #define TAG "szpi_display"
 #define LCD_QUEUE_DEPTH 1
@@ -37,6 +39,65 @@ static bool s_flush_inflight;
 static uint32_t s_flush_timeouts;
 static esp_err_t s_last_flush_error;
 
+/* ISR writes completion time before publishing the existing DMA semaphore.
+ * Only the UI task reads it, after taking that semaphore. */
+static volatile int64_t s_dma_done_us;
+static bool s_test_active;
+static bool s_test_frame_active;
+static bool s_test_flush_tracked;
+static bool s_test_flush_last;
+static int64_t s_test_window_us;
+static int64_t s_test_frame_start_us;
+static int64_t s_test_last_dma_us;
+static int64_t s_test_render_start_us;
+static uint32_t s_test_frames;
+static uint32_t s_test_renders;
+static uint32_t s_test_pixels;
+static uint32_t s_test_frame_pixels;
+static uint64_t s_test_frame_total_us;
+static uint32_t s_test_frame_max_us;
+static uint64_t s_test_render_total_us;
+static uint64_t s_test_gap_total_us;
+static uint64_t s_test_frame_gap_us;
+static uint32_t s_test_gap_max_us;
+static szpi_display_test_stats_t s_test_stats;
+
+static void display_test_event(lv_event_t *event)
+{
+    if (!s_test_active) return;
+    if (lv_event_get_code(event) != LV_EVENT_RENDER_START &&
+        lv_event_get_code(event) != LV_EVENT_RENDER_READY) return;
+    int64_t now = esp_timer_get_time();
+    switch (lv_event_get_code(event)) {
+        case LV_EVENT_RENDER_START:
+            s_test_render_start_us = now;
+            break;
+        case LV_EVENT_RENDER_READY:
+            if (s_test_render_start_us != 0) {
+                s_test_render_total_us += now - s_test_render_start_us;
+                s_test_renders++;
+                s_test_render_start_us = 0;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void record_test_completion(int64_t done_us)
+{
+    if (!s_test_active || !s_test_flush_tracked) return;
+    s_test_last_dma_us = done_us;
+    if (!s_test_flush_last) return;
+    uint32_t duration = (uint32_t)(done_us - s_test_frame_start_us);
+    s_test_frames++;
+    s_test_frame_total_us += duration;
+    s_test_pixels += s_test_frame_pixels;
+    s_test_gap_total_us += s_test_frame_gap_us;
+    if (duration > s_test_frame_max_us) s_test_frame_max_us = duration;
+    s_test_frame_active = false;
+}
+
 static esp_err_t draw_bitmap(const void *rgb565, uint16_t x1, uint16_t y1,
                              uint16_t x2_exclusive, uint16_t y2_exclusive);
 
@@ -55,6 +116,7 @@ static bool lcd_color_trans_done(esp_lcd_panel_io_handle_t io,
     (void)context;
     BaseType_t higher_priority_task_woken = pdFALSE;
     if (s_flush_semaphore == NULL) return false;
+    s_dma_done_us = esp_timer_get_time();
     (void)xSemaphoreGiveFromISR(s_flush_semaphore, &higher_priority_task_woken);
     return higher_priority_task_woken == pdTRUE;
 }
@@ -70,6 +132,8 @@ static esp_err_t wait_flush_internal(TickType_t timeout_ticks, bool report_timeo
         return ESP_ERR_TIMEOUT;
     }
     s_flush_inflight = false;
+    record_test_completion(s_dma_done_us);
+    s_test_flush_tracked = false;
     return ESP_OK;
 }
 
@@ -92,17 +156,32 @@ static void flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t *pixe
     }
     uint32_t pixels = (uint32_t)(area->x2 - area->x1 + 1) * (uint32_t)(area->y2 - area->y1 + 1);
     // LVGL renders RGB565 in native little-endian memory; ST7789 expects MSB first.
-    for (uint32_t i = 0; i < pixels; ++i) {
-        uint8_t *pixel = &pixel_map[i * 2U];
-        uint8_t first = pixel[0];
-        pixel[0] = pixel[1];
-        pixel[1] = first;
+    lv_draw_sw_rgb565_swap(pixel_map, pixels);
+    s_test_flush_tracked = s_test_active;
+    s_test_flush_last = lv_display_flush_is_last(display);
+    if (s_test_active) {
+        int64_t now = esp_timer_get_time();
+        if (!s_test_frame_active) {
+            s_test_frame_active = true;
+            s_test_frame_start_us = now;
+            s_test_frame_pixels = 0;
+            s_test_frame_gap_us = 0;
+            s_test_last_dma_us = 0;
+        }
+        if (s_test_last_dma_us != 0) {
+            uint32_t gap = (uint32_t)(now - s_test_last_dma_us);
+            s_test_frame_gap_us += gap;
+            if (gap > s_test_gap_max_us) s_test_gap_max_us = gap;
+        }
+        s_test_frame_pixels += pixels;
     }
     s_flush_inflight = true;
     s_last_flush_error = draw_bitmap(pixel_map, (uint16_t)area->x1, (uint16_t)area->y1,
         (uint16_t)(area->x2 + 1), (uint16_t)(area->y2 + 1));
     if (s_last_flush_error != ESP_OK) {
         s_flush_inflight = false;
+        s_test_flush_tracked = false;
+        s_test_frame_active = false;
         lv_display_flush_ready(display);
         ESP_LOGE(TAG, "LCD flush submission failed: %s", esp_err_to_name(s_last_flush_error));
     }
@@ -151,6 +230,10 @@ esp_err_t szpi_display_init(lv_display_t **display)
     s_flush_inflight = false;
     s_flush_timeouts = 0;
     s_last_flush_error = ESP_OK;
+    s_test_active = false;
+    s_test_frame_active = false;
+    s_test_flush_tracked = false;
+    s_test_stats = (szpi_display_test_stats_t){0};
     lv_tick_set_cb(display_tick_ms);
 
     spi_bus_config_t bus = {
@@ -210,14 +293,33 @@ esp_err_t szpi_display_init(lv_display_t **display)
     err = init_backlight();
     if (err != ESP_OK) goto fail;
 
-    s_draw_buffer_1 = heap_caps_aligned_alloc(4, SZPI_DISPLAY_BUFFER_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    s_draw_buffer_2 = heap_caps_aligned_alloc(4, SZPI_DISPLAY_BUFFER_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    if (s_draw_buffer_1 == NULL || s_draw_buffer_2 == NULL) { err = ESP_ERR_NO_MEM; goto fail; }
+    const uint32_t dma_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT;
+    ESP_LOGI(TAG, "DMA allocation: each=%u free=%u largest=%u",
+        (unsigned)SZPI_DISPLAY_BUFFER_BYTES,
+        (unsigned)heap_caps_get_free_size(dma_caps),
+        (unsigned)heap_caps_get_largest_free_block(dma_caps));
+    s_draw_buffer_1 = heap_caps_aligned_alloc(4, SZPI_DISPLAY_BUFFER_BYTES, dma_caps);
+    if (s_draw_buffer_1 == NULL) {
+        ESP_LOGE(TAG, "DMA buffer 1 allocation failed");
+        err = ESP_ERR_NO_MEM;
+        goto fail;
+    }
+    s_draw_buffer_2 = heap_caps_aligned_alloc(4, SZPI_DISPLAY_BUFFER_BYTES, dma_caps);
+    if (s_draw_buffer_2 == NULL) {
+        ESP_LOGE(TAG, "DMA buffer 2 allocation failed");
+        err = ESP_ERR_NO_MEM;
+        goto fail;
+    }
     s_display = lv_display_create(SZPI_DISPLAY_WIDTH, SZPI_DISPLAY_HEIGHT);
-    if (s_display == NULL) { err = ESP_ERR_NO_MEM; goto fail; }
+    if (s_display == NULL) {
+        ESP_LOGE(TAG, "LVGL display allocation failed");
+        err = ESP_ERR_NO_MEM;
+        goto fail;
+    }
     lv_display_set_color_format(s_display, LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(s_display, flush_cb);
     lv_display_set_flush_wait_cb(s_display, flush_wait_cb);
+    lv_display_add_event_cb(s_display, display_test_event, LV_EVENT_ALL, NULL);
     lv_display_set_buffers(s_display, s_draw_buffer_1, s_draw_buffer_2,
         SZPI_DISPLAY_BUFFER_BYTES, LV_DISPLAY_RENDER_MODE_PARTIAL);
     s_initialized = true;
@@ -227,8 +329,70 @@ esp_err_t szpi_display_init(lv_display_t **display)
     return ESP_OK;
 
 fail:
+    ESP_LOGE(TAG, "display init failed: %s; DMA free=%u largest=%u",
+        esp_err_to_name(err),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
     (void)szpi_display_deinit();
     return err;
+}
+
+esp_err_t szpi_display_set_test_active(bool active)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    s_test_active = false;
+    if (active) {
+        esp_err_t err = szpi_display_wait_flush(pdMS_TO_TICKS(1000));
+        if (err != ESP_OK) return err;
+    }
+    s_test_flush_tracked = false;
+    s_test_frame_active = false;
+    s_test_frame_start_us = 0;
+    s_test_last_dma_us = 0;
+    s_test_render_start_us = 0;
+    s_test_frames = s_test_renders = s_test_pixels = 0;
+    s_test_frame_total_us = s_test_render_total_us = s_test_gap_total_us = 0;
+    s_test_frame_max_us = s_test_gap_max_us = 0;
+    s_test_stats = (szpi_display_test_stats_t){0};
+    s_test_window_us = esp_timer_get_time();
+    s_test_active = active;
+    return ESP_OK;
+}
+
+esp_err_t szpi_display_get_test_stats(szpi_display_test_stats_t *stats)
+{
+    if (stats == NULL) return ESP_ERR_INVALID_ARG;
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (!s_test_active) {
+        *stats = s_test_stats;
+        return ESP_OK;
+    }
+    if (s_test_active && s_flush_inflight && wait_flush_internal(0, false) == ESP_OK) {
+        lv_display_flush_ready(s_display);
+    }
+    int64_t now = esp_timer_get_time();
+    int64_t elapsed = now - s_test_window_us;
+    if (s_test_active && elapsed >= 1000000 && s_test_frames != 0) {
+        s_test_stats = (szpi_display_test_stats_t){
+            .valid = true,
+            .fps_x10 = (uint32_t)((uint64_t)s_test_frames * 10000000 / elapsed),
+            .frame_avg_us = (uint32_t)(s_test_frame_total_us / s_test_frames),
+            .frame_max_us = s_test_frame_max_us,
+            .lvgl_avg_us = s_test_renders ? (uint32_t)(s_test_render_total_us / s_test_renders) : 0,
+            .gap_avg_us = (uint32_t)(s_test_gap_total_us / s_test_frames),
+        };
+        ESP_LOGI(TAG, "display test: FPS=%lu.%lu frame avg/max=%lu/%luus LVGL=%luus gap/frame=%luus gap max=%luus pixels/frame=%lu",
+            (unsigned long)(s_test_stats.fps_x10 / 10), (unsigned long)(s_test_stats.fps_x10 % 10),
+            (unsigned long)s_test_stats.frame_avg_us, (unsigned long)s_test_stats.frame_max_us,
+            (unsigned long)s_test_stats.lvgl_avg_us, (unsigned long)s_test_stats.gap_avg_us,
+            (unsigned long)s_test_gap_max_us, (unsigned long)(s_test_pixels / s_test_frames));
+        s_test_frames = s_test_renders = s_test_pixels = 0;
+        s_test_frame_total_us = s_test_render_total_us = s_test_gap_total_us = 0;
+        s_test_frame_max_us = s_test_gap_max_us = 0;
+        s_test_window_us = now;
+    }
+    *stats = s_test_stats;
+    return ESP_OK;
 }
 
 esp_err_t szpi_display_wait_flush(TickType_t timeout_ticks)
@@ -323,7 +487,8 @@ esp_err_t szpi_display_deinit(void)
     }
     if (s_ledc_timer_initialized) {
         ledc_timer_config_t timer = {.speed_mode = LEDC_LOW_SPEED_MODE, .timer_num = s_bindings->backlight_timer, .deconfigure = true};
-        esp_err_t err = ledc_timer_config(&timer);
+        esp_err_t err = ledc_timer_pause(LEDC_LOW_SPEED_MODE, s_bindings->backlight_timer);
+        if (err == ESP_OK) err = ledc_timer_config(&timer);
         if (result == ESP_OK) result = err;
         s_ledc_timer_initialized = false;
     }

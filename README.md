@@ -71,6 +71,8 @@ LCD 空白屏排查可在 `menuconfig → SZPI display` 覆盖 SPI 频率或模�
 
 当前高刷新目标：LCD SPI 80MHz、LVGL 16ms 刷新周期，双内部 DMA 缓冲各 40 行；配置与构建不代表实测全屏 60 FPS，高速稳定性及帧率待上板验证。
 
+固件使用性能编译优化 `-O2`，保留断言和错误检查。移动条纹首轮板上基线约 34.2 FPS，`-O2` 的收益待复测；详见 [显示性能测试](docs/develop/display_performance_test.md)。
+
 ## 第三阶段：camera 与预览
 
 [task_phase_3.md](docs/develop/task_phase_3.md) 跟踪 GC2145 适配、QVGA RGB565 采集及 LVGL 预览；代码已实现 board camera bindings、相机组件、runtime 预览服务及可进入 / 退出的预览页。依赖构建与实物验收状态见[验证记录](docs/develop/phase_3_validation.md)。
@@ -95,6 +97,8 @@ LVGL 9.5 的断言、颜色混合舍入、换行字符与主题选项已在 `sdk
 
 设置菜单及其详情页顶部左侧显示 `< 上一级标题`（Home、Settings 或 Audio），中间显示当前标题。滑条卡片显示不可拖动的占比预览；点击后进入禁用划页手势的独立调节页，使用大滑条调整演示值，并通过 Back 按钮返回。
 
+Display → FPS / Tearing 提供移动条纹测试；板上显示实测 FPS 和刷新耗时，并每秒输出串口统计，右划退出即停止。模拟器仅预览图案。指标定义和操作步骤见 [显示性能测试](docs/develop/display_performance_test.md)。
+
 ```sh
 cmake -S simulator -B simulator/build
 cmake --build simulator/build
@@ -102,3 +106,7 @@ cmake --build simulator/build
 ```
 
 Fedora 安装 SDL2 开发包：`sudo dnf install SDL2-devel pkgconf-pkg-config`。模拟器窗口固定为 320×240、1:1 显示且不可调整大小；鼠标拖动可模拟触摸划页，键盘右方向键进入设置、左方向键返回，B 模拟 BOOT 短按，Esc 退出。UI 使用英文和 Noto Sans，字体以仅含 ASCII 字符的 C 源码嵌入固件与模拟器；生成方式与许可证记录在[第五阶段验证记录](docs/develop/phase_5_validation.md)。模拟器使用主机本地时间；固件使用 SNTP 校时。
+
+LVGL 的 64KiB 静态对象内存池放在 PSRAM；两块 40 行像素 DMA 缓冲仍放内部 RAM。PSRAM 布局释放内部 RAM；40 行双 DMA 配合缓存优化的条纹测试实测约 41.5 FPS，撕裂有所缓解但未消除。
+
+PSRAM UI 缓存配置：指令缓存 32KiB、数据缓存 64KiB、数据缓存行 64B。40 行双 DMA 的板上整屏条纹测试约 41.5 FPS；完整记录见显示性能测试文档。
