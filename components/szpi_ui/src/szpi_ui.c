@@ -1,28 +1,8 @@
-#include "szpi_ui.h"
+#include "szpi_ui_internal.h"
 
 #include <string.h>
 
 extern const lv_font_t szpi_ui_font_button;
-
-enum {
-    SZPI_UI_MENU_DISPLAY = 0,
-    SZPI_UI_MENU_NETWORK,
-    SZPI_UI_MENU_AUDIO,
-    SZPI_UI_MENU_STORAGE,
-    SZPI_UI_MENU_ABOUT,
-    SZPI_UI_MENU_COUNT,
-};
-
-typedef struct {
-    lv_obj_t *screen;
-    lv_obj_t *network_dot;
-    lv_obj_t *network_label;
-    lv_obj_t *title_label;
-    lv_obj_t *time_label;
-    bool network_state_set;
-    bool network_connected;
-    char displayed_time[6];
-} szpi_ui_page_t;
 
 typedef struct {
     szpi_ui_page_t page;
@@ -31,6 +11,7 @@ typedef struct {
     lv_obj_t *editor_value;
     lv_obj_t *editor_slider;
     size_t parent;
+    size_t index;
     bool brightness;
 } szpi_ui_slider_test_t;
 
@@ -44,34 +25,22 @@ static bool s_settings_active;
 static int s_active_detail = -1;
 static szpi_ui_event_cb_t s_event_cb;
 static void *s_event_context;
-static szpi_ui_page_t s_display_test_page;
-static lv_timer_t *s_display_test_timer;
-static lv_obj_t *s_display_test_area;
-static lv_obj_t *s_display_test_stripes[10];
-static lv_obj_t *s_display_test_stats_label;
-static uint32_t s_display_test_start_tick;
-static bool s_display_test_running;
-static char s_display_test_stats_text[128];
+static szpi_ui_page_t s_audio_test_page;
+static lv_obj_t *s_audio_test_status_label;
+
+void szpi_ui_emit(szpi_ui_event_t event, uint32_t value)
+{
+    if (s_event_cb != NULL) s_event_cb(event, value, s_event_context);
+}
+
 static lv_obj_t *s_orientation_value;
 
-static szpi_ui_page_t s_network_info_page, s_network_method_page;
-static szpi_ui_page_t s_network_qr_pages[2];
-#define s_network_qr_page s_network_qr_pages[s_network_dpp ? 0 : 1]
-#define s_network_qr s_network_qrs[s_network_dpp ? 0 : 1]
-#define s_network_qr_text s_network_qr_texts[s_network_dpp ? 0 : 1]
-#define s_network_qr_payload s_network_qr_payloads[s_network_dpp ? 0 : 1]
-static lv_obj_t *s_network_saved_label, *s_network_info_label, *s_network_message;
-static lv_obj_t *s_network_qrs[2], *s_network_qr_texts[2], *s_network_forget_button;
-static szpi_ui_model_t s_network_model;
-static char s_network_qr_payloads[2][512];
-static uint32_t s_network_request_counter, s_network_page_request;
-static bool s_network_dpp, s_network_forget_confirm, s_network_boot_notice;
-
-static void screen_gesture_event(lv_event_t *event);
+void szpi_ui_screen_gesture_event(lv_event_t *event);
 static void menu_item_event(lv_event_t *event);
 static void return_to_settings(void);
+static bool create_audio_test(lv_obj_t *panel, lv_obj_t *parent_screen);
 
-static void style_card(lv_obj_t *card)
+void szpi_ui_style_card(lv_obj_t *card)
 {
     lv_obj_remove_style_all(card);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -85,7 +54,7 @@ static void style_card(lv_obj_t *card)
     lv_obj_add_flag(card, LV_OBJ_FLAG_GESTURE_BUBBLE);
 }
 
-static bool create_page(szpi_ui_page_t *page, const char *title, bool show_status,
+bool szpi_ui_page_create(szpi_ui_page_t *page, const char *title, bool show_status,
                         const char *parent_title)
 {
     page->screen = lv_obj_create(NULL);
@@ -96,7 +65,7 @@ static bool create_page(szpi_ui_page_t *page, const char *title, bool show_statu
     lv_obj_set_style_text_font(page->screen, &szpi_ui_font_button, 0);
     lv_obj_set_style_bg_color(page->screen, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(page->screen, LV_OPA_COVER, 0);
-    lv_obj_add_event_cb(page->screen, screen_gesture_event, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(page->screen, szpi_ui_screen_gesture_event, LV_EVENT_GESTURE, NULL);
 
     page->title_label = lv_label_create(page->screen);
     if (page->title_label == NULL) return false;
@@ -162,7 +131,7 @@ static bool create_settings_menu(void)
     for (size_t i = 0; i < SZPI_UI_MENU_COUNT; ++i) {
         lv_obj_t *row = lv_obj_create(panel);
         if (row == NULL) return false;
-        style_card(row);
+        szpi_ui_style_card(row);
         lv_obj_set_size(row, lv_pct(100), 60);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, menu_item_event, LV_EVENT_CLICKED,
@@ -183,7 +152,7 @@ static lv_obj_t *create_display_row(lv_obj_t *panel, lv_coord_t y,
 {
     lv_obj_t *row = lv_obj_create(panel);
     if (row == NULL) return false;
-    style_card(row);
+    szpi_ui_style_card(row);
     lv_obj_set_size(row, lv_pct(100), 56);
     lv_obj_set_pos(row, 0, y);
 
@@ -201,37 +170,6 @@ static lv_obj_t *create_display_row(lv_obj_t *panel, lv_coord_t y,
     return value_label;
 }
 
-static bool create_switch_row(lv_obj_t *panel, lv_coord_t y, const char *title,
-                              bool initial_state)
-{
-    lv_obj_t *row = lv_obj_create(panel);
-    if (row == NULL) return false;
-    style_card(row);
-    lv_obj_set_size(row, lv_pct(100), 56);
-    lv_obj_set_pos(row, 0, y);
-
-    lv_obj_t *label = lv_label_create(row);
-    lv_obj_t *toggle = lv_switch_create(row);
-    if (label == NULL || toggle == NULL) return false;
-    lv_label_set_text(label, title);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xD7DCE5), 0);
-    lv_obj_align(label, LV_ALIGN_LEFT_MID, 12, 0);
-    lv_obj_set_size(toggle, 62, 36);
-    lv_obj_set_ext_click_area(toggle, 6);
-    lv_obj_set_style_bg_color(toggle, lv_color_hex(0x343C48), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(toggle, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(toggle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(toggle, lv_color_hex(0x34D399), LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_opa(toggle, LV_OPA_COVER, LV_PART_INDICATOR | LV_STATE_CHECKED);
-    lv_obj_align(toggle, LV_ALIGN_RIGHT_MID, -12, 0);
-    if (initial_state) lv_obj_add_state(toggle, LV_STATE_CHECKED);
-    lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(label, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_flag(toggle, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    return true;
-}
-
 static void slider_value_event(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) return;
@@ -241,18 +179,17 @@ static void slider_value_event(lv_event_t *event)
     lv_label_set_text_fmt(test->editor_value, "%d%%", value);
     lv_label_set_text_fmt(test->preview_value, "%d%%", value);
     lv_bar_set_value(test->preview_bar, value, LV_ANIM_OFF);
-    if (test->brightness && s_event_cb != NULL) {
-        s_event_cb(SZPI_UI_EVENT_BRIGHTNESS_CHANGED, (uint32_t)value, s_event_context);
-    }
+    szpi_ui_event_t ui_event = test->brightness ? SZPI_UI_EVENT_BRIGHTNESS_CHANGED :
+        (test->index == 0 ? SZPI_UI_EVENT_SPEAKER_VOLUME_CHANGED : SZPI_UI_EVENT_MIC_GAIN_CHANGED);
+    szpi_ui_emit(ui_event, (uint32_t)value);
 }
 
-static void brightness_save_event(lv_event_t *event)
+static void slider_save_event(lv_event_t *event)
 {
     szpi_ui_slider_test_t *test = lv_event_get_user_data(event);
-    if (test->brightness && s_event_cb != NULL) {
-        s_event_cb(SZPI_UI_EVENT_BRIGHTNESS_SAVE,
-                   (uint32_t)lv_slider_get_value(test->editor_slider), s_event_context);
-    }
+    szpi_ui_event_t ui_event = test->brightness ? SZPI_UI_EVENT_BRIGHTNESS_SAVE :
+        (test->index == 0 ? SZPI_UI_EVENT_SPEAKER_VOLUME_SAVE : SZPI_UI_EVENT_MIC_GAIN_SAVE);
+    szpi_ui_emit(ui_event, (uint32_t)lv_slider_get_value(test->editor_slider));
 }
 
 static void slider_card_event(lv_event_t *event)
@@ -268,9 +205,7 @@ static void slider_back_event(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
     szpi_ui_slider_test_t *test = lv_event_get_user_data(event);
-    if (test->brightness && s_event_cb != NULL) {
-        s_event_cb(SZPI_UI_EVENT_BRIGHTNESS_SAVE, (uint32_t)lv_slider_get_value(test->editor_slider), s_event_context);
-    }
+    slider_save_event(event);
     lv_screen_load_anim(s_detail_pages[test->parent].screen,
                         LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
 }
@@ -279,11 +214,12 @@ static bool create_slider_row(lv_obj_t *panel, lv_coord_t y, const char *title,
                               int initial_value, size_t index)
 {
     szpi_ui_slider_test_t *test = &s_slider_tests[index];
+    test->index = index;
     test->parent = index == 2 ? SZPI_UI_MENU_DISPLAY : SZPI_UI_MENU_AUDIO;
     test->brightness = index == 2;
     lv_obj_t *row = lv_obj_create(panel);
     if (row == NULL) return false;
-    style_card(row);
+    szpi_ui_style_card(row);
     lv_obj_set_size(row, lv_pct(100), 78);
     lv_obj_set_pos(row, 0, y);
 
@@ -314,9 +250,9 @@ static bool create_slider_row(lv_obj_t *panel, lv_coord_t y, const char *title,
     lv_obj_add_flag(value_label, LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(bar, LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    if (!create_page(&test->page, title, false, test->brightness ? "Display" : "Audio")) return false;
+    if (!szpi_ui_page_create(&test->page, title, false, test->brightness ? "Display" : "Audio")) return false;
     /* Horizontal movement here belongs exclusively to the slider. */
-    lv_obj_remove_event_cb(test->page.screen, screen_gesture_event);
+    lv_obj_remove_event_cb(test->page.screen, szpi_ui_screen_gesture_event);
     test->editor_value = lv_label_create(test->page.screen);
     lv_obj_t *slider = lv_slider_create(test->page.screen);
     test->editor_slider = slider;
@@ -338,8 +274,8 @@ static bool create_slider_row(lv_obj_t *panel, lv_coord_t y, const char *title,
     lv_obj_set_ext_click_area(slider, 12);
     lv_obj_remove_flag(slider, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(slider, slider_value_event, LV_EVENT_VALUE_CHANGED, test);
-    if (test->brightness) lv_obj_add_event_cb(slider, brightness_save_event, LV_EVENT_RELEASED, test);
-    style_card(back);
+    lv_obj_add_event_cb(slider, slider_save_event, LV_EVENT_RELEASED, test);
+    szpi_ui_style_card(back);
     lv_obj_set_size(back, 144, 44);
     lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, -16);
     lv_obj_set_style_bg_color(back, lv_color_hex(0x252D38), LV_STATE_PRESSED);
@@ -352,311 +288,104 @@ static bool create_slider_row(lv_obj_t *panel, lv_coord_t y, const char *title,
     return true;
 }
 
-static void display_test_tick(lv_timer_t *timer)
-{
-    (void)timer;
-    uint32_t phase = (lv_tick_elaps(s_display_test_start_tick) / 8) % 80;
-    for (size_t i = 0; i < 10; ++i) {
-        lv_obj_set_x(s_display_test_stripes[i], (int32_t)i * 40 - (int32_t)phase);
-    }
-    /* Force the entire test area to change, rather than measuring tiny updates. */
-    lv_obj_invalidate(s_display_test_area);
-    /* The animation and refresh timers can run in either order. Make the
-     * updated image eligible at the next handler instead of another period. */
-    lv_timer_t *refresh_timer = lv_display_get_refr_timer(lv_obj_get_display(s_display_test_area));
-    if (refresh_timer != NULL) lv_timer_ready(refresh_timer);
-}
-
-static void display_test_lifecycle(lv_event_t *event)
-{
-    if (lv_event_get_code(event) == LV_EVENT_SCREEN_LOADED) {
-        s_display_test_running = true;
-        s_display_test_start_tick = lv_tick_get();
-        s_display_test_stats_text[0] = '\0';
-        lv_timer_resume(s_display_test_timer);
-        lv_timer_ready(s_display_test_timer);
-        if (s_event_cb != NULL) s_event_cb(SZPI_UI_EVENT_DISPLAY_TEST_START, 0, s_event_context);
-    } else if (lv_event_get_code(event) == LV_EVENT_SCREEN_UNLOAD_START && s_display_test_running) {
-        s_display_test_running = false;
-        lv_timer_pause(s_display_test_timer);
-        if (s_event_cb != NULL) s_event_cb(SZPI_UI_EVENT_DISPLAY_TEST_STOP, 0, s_event_context);
-    }
-}
-
-static void display_test_open(lv_event_t *event)
+static void audio_test_button_event(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
     lv_indev_t *indev = lv_indev_active();
     if (indev != NULL && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) return;
-    lv_screen_load_anim(s_display_test_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+    uintptr_t encoded_event = (uintptr_t)lv_event_get_user_data(event);
+    szpi_ui_emit((szpi_ui_event_t)encoded_event, 0);
 }
 
-static bool create_display_test(lv_obj_t *panel)
+static void audio_test_open_event(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
+    lv_indev_t *indev = lv_indev_active();
+    if (indev != NULL && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) return;
+    lv_screen_load_anim(s_audio_test_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+}
+
+static void audio_test_gesture_event(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_GESTURE ||
+        lv_indev_get_gesture_dir(lv_indev_active()) != LV_DIR_RIGHT) return;
+    lv_screen_load_anim(lv_event_get_user_data(event), LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
+    lv_indev_wait_release(lv_indev_active());
+}
+
+static lv_obj_t *audio_test_button(lv_obj_t *parent, int y, const char *text,
+                                   szpi_ui_event_t event)
+{
+    lv_obj_t *button = lv_button_create(parent);
+    if (button == NULL) return NULL;
+    szpi_ui_style_card(button);
+    lv_obj_set_size(button, 280, 46);
+    lv_obj_align(button, LV_ALIGN_TOP_MID, 0, y);
+    lv_obj_add_event_cb(button, audio_test_button_event, LV_EVENT_CLICKED, (void *)(uintptr_t)event);
+    lv_obj_t *label = lv_label_create(button);
+    if (label == NULL) return NULL;
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xE7EAF0), 0);
+    lv_obj_center(label);
+    return button;
+}
+
+static bool create_audio_test(lv_obj_t *panel, lv_obj_t *parent_screen)
 {
     lv_obj_t *row = lv_obj_create(panel);
     if (row == NULL) return false;
-    style_card(row);
+    szpi_ui_style_card(row);
     lv_obj_set_size(row, lv_pct(100), 56);
-    lv_obj_set_pos(row, 0, 278);
-    lv_obj_add_event_cb(row, display_test_open, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_pos(row, 0, 176);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row, audio_test_open_event, LV_EVENT_CLICKED, NULL);
     lv_obj_t *label = lv_label_create(row);
     if (label == NULL) return false;
-    lv_label_set_text(label, "FPS / Tearing");
+    lv_label_set_text(label, "Audio Test");
     lv_obj_set_style_text_color(label, lv_color_hex(0xD7DCE5), 0);
     lv_obj_align(label, LV_ALIGN_LEFT_MID, 12, 0);
     lv_obj_add_flag(label, LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    if (!create_page(&s_display_test_page, "Test", false, "Display")) return false;
-    s_display_test_area = lv_obj_create(s_display_test_page.screen);
-    if (s_display_test_area == NULL) return false;
-    lv_obj_remove_style_all(s_display_test_area);
-    lv_obj_remove_flag(s_display_test_area, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(s_display_test_area, 320, 240);
-    lv_obj_set_pos(s_display_test_area, 0, 0);
-    lv_obj_set_style_bg_color(s_display_test_area, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_display_test_area, LV_OPA_COVER, 0);
-    lv_obj_add_flag(s_display_test_area, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_move_to_index(s_display_test_area, 0);
-    lv_obj_t *header = lv_obj_create(s_display_test_page.screen);
-    if (header == NULL) return false;
-    lv_obj_remove_style_all(header);
-    lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(header, 320, 28);
-    lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_add_flag(header, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_move_to_index(header, 1);
-    for (size_t i = 0; i < 10; ++i) {
-        lv_obj_t *stripe = lv_obj_create(s_display_test_area);
-        if (stripe == NULL) return false;
-        s_display_test_stripes[i] = stripe;
-        lv_obj_remove_style_all(stripe);
-        lv_obj_remove_flag(stripe, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(stripe, 40, 240);
-        lv_obj_set_pos(stripe, (int32_t)i * 40, 0);
-        lv_obj_set_style_bg_color(stripe, i % 2 ? lv_color_white() : lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(stripe, LV_OPA_COVER, 0);
-        lv_obj_add_flag(stripe, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    }
-    s_display_test_stats_label = lv_label_create(s_display_test_page.screen);
-    if (s_display_test_stats_label == NULL) return false;
-    lv_label_set_text(s_display_test_stats_label, "Measuring...");
-    lv_obj_set_style_text_color(s_display_test_stats_label, lv_color_hex(0xAAB2BF), 0);
-    lv_obj_set_style_bg_color(s_display_test_stats_label, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_display_test_stats_label, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_left(s_display_test_stats_label, 8, 0);
-    lv_obj_set_style_pad_top(s_display_test_stats_label, 4, 0);
-    lv_obj_set_size(s_display_test_stats_label, 320, 56);
-    lv_obj_set_pos(s_display_test_stats_label, 0, 184);
-    s_display_test_timer = lv_timer_create(display_test_tick, 16, NULL);
-    if (s_display_test_timer == NULL) return false;
-    lv_timer_pause(s_display_test_timer);
-    lv_obj_add_event_cb(s_display_test_page.screen, display_test_lifecycle, LV_EVENT_ALL, NULL);
+    if (!szpi_ui_page_create(&s_audio_test_page, "Audio Test", false, "Audio")) return false;
+    lv_obj_remove_event_cb(s_audio_test_page.screen, szpi_ui_screen_gesture_event);
+    lv_obj_add_event_cb(s_audio_test_page.screen, audio_test_gesture_event, LV_EVENT_GESTURE, parent_screen);
+    if (!audio_test_button(s_audio_test_page.screen, 42, "Play test tone", SZPI_UI_EVENT_AUDIO_TEST_TONE) ||
+        !audio_test_button(s_audio_test_page.screen, 94, "Sample microphone", SZPI_UI_EVENT_AUDIO_TEST_CAPTURE) ||
+        !audio_test_button(s_audio_test_page.screen, 146, "Stop", SZPI_UI_EVENT_AUDIO_STOP)) return false;
+    s_audio_test_status_label = lv_label_create(s_audio_test_page.screen);
+    if (s_audio_test_status_label == NULL) return false;
+    lv_obj_set_width(s_audio_test_status_label, 288);
+    lv_obj_set_pos(s_audio_test_status_label, 16, 202);
+    lv_obj_set_style_text_color(s_audio_test_status_label, lv_color_hex(0xAAB2BF), 0);
+    lv_label_set_text(s_audio_test_status_label, "Audio is ready.");
     return true;
 }
 
-static void network_emit(szpi_ui_event_t event)
+static void update_audio_test(const szpi_ui_model_t *model)
 {
-    if (s_event_cb) s_event_cb(event, event == SZPI_UI_EVENT_NETWORK_BEGIN ? ((s_network_page_request << 1) | (s_network_dpp ? 1U : 0U)) :
-        (event == SZPI_UI_EVENT_NETWORK_CANCEL ? s_network_page_request : s_network_model.provisioning_generation), s_event_context);
-}
-
-static void network_click(lv_event_t *event)
-{
-    uintptr_t action = (uintptr_t)lv_event_get_user_data(event);
-    if (action == 1) {
-        s_network_forget_confirm = false;
-        lv_obj_remove_state(s_network_forget_button, LV_STATE_DISABLED);
-        lv_label_set_text(lv_obj_get_child(s_network_forget_button, 0), "Clear Wi-Fi settings");
-        lv_screen_load_anim(s_network_info_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
-    } else if (action == 2) {
-        lv_screen_load_anim(s_network_method_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
-    } else if (action == 3 || action == 4) {
-        s_network_dpp = action == 3;
-        lv_label_set_text(s_network_qr_page.title_label, s_network_dpp ? "Easy Connect" : "Wi-Fi Hotspot");
-        s_network_qr_payload[0] = 0;
-        lv_obj_add_flag(s_network_qr, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(s_network_qr_text, "Preparing setup...");
-        lv_screen_load_anim(s_network_qr_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
-    } else if (action == 5) {
-        if (!s_network_model.network_supported || !s_network_model.network_has_config || s_network_model.provisioning_active) return;
-        if (!s_network_forget_confirm) {
-            s_network_forget_confirm = true;
-            lv_label_set_text(lv_obj_get_child(s_network_forget_button, 0), "Confirm clear settings");
-        } else {
-            s_network_forget_confirm = false;
-            network_emit(SZPI_UI_EVENT_NETWORK_FORGET);
-            lv_obj_add_state(s_network_forget_button, LV_STATE_DISABLED);
-        }
-
-    }
-}
-
-static lv_obj_t *network_button(lv_obj_t *parent, int x, int y, int width,
-                               const char *title, uintptr_t action)
-{
-    lv_obj_t *button = lv_button_create(parent);
-    if (!button) return NULL;
-    style_card(button);
-    lv_obj_set_pos(button, x, y);
-    lv_obj_set_size(button, width, 48);
-    lv_obj_t *label = lv_label_create(button);
-    if (!label) return NULL;
-    lv_label_set_text(label, title);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xE7EAF0), 0);
-    lv_obj_center(label);
-    lv_obj_add_event_cb(button, network_click, LV_EVENT_CLICKED, (void *)action);
-    return button;
-}
-
-static void network_gesture(lv_event_t *event)
-{
-    if (lv_indev_get_gesture_dir(lv_indev_active()) != LV_DIR_RIGHT) return;
-    lv_obj_t *screen = lv_event_get_current_target(event);
-    if (screen == s_network_qr_page.screen) {
-        lv_screen_load_anim(s_network_method_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
+    if (s_audio_test_status_label == NULL) return;
+    static const char *const state_text[] = {
+        "Audio offline", "Ready", "Playing test tone", "Sampling microphone",
+        "Playing microphone test", "Recording", "Playing file", "Test complete", "Audio fault",
+    };
+    unsigned state = (unsigned)model->audio_state;
+    const char *status = state < sizeof(state_text) / sizeof(state_text[0]) ?
+        state_text[state] : "Audio status unavailable";
+    if (model->audio_state == SZPI_UI_AUDIO_FAULT) {
+        lv_label_set_text_fmt(s_audio_test_status_label, "%s (%lu)\nP %u  RMS %u",
+            status, (unsigned long)model->audio_error_code,
+            (unsigned)model->audio_peak_sample, (unsigned)model->audio_rms_sample);
     } else {
-        lv_screen_load_anim(s_detail_pages[SZPI_UI_MENU_NETWORK].screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
-    }
-    lv_indev_wait_release(lv_indev_active());
-}
-
-static void network_qr_lifecycle(lv_event_t *event)
-{
-    lv_event_code_t code = lv_event_get_code(event);
-    if (code == LV_EVENT_SCREEN_LOADED) {
-        s_network_dpp = lv_event_get_current_target(event) == s_network_qr_pages[0].screen;
-        s_network_request_counter = (s_network_request_counter + 1) & 0x7FFFFFFFU;
-        if (!s_network_request_counter) s_network_request_counter = 1;
-        s_network_page_request = s_network_request_counter;
-        network_emit(SZPI_UI_EVENT_NETWORK_BEGIN);
-    } else if (code == LV_EVENT_SCREEN_UNLOAD_START && s_network_page_request) {
-        /* This also cancels a queued begin before its status reaches the UI. */
-        network_emit(SZPI_UI_EVENT_NETWORK_CANCEL);
-        s_network_page_request = 0;
-    }
-}
-
-static bool create_network(lv_obj_t *panel)
-{
-    lv_obj_t *saved = network_button(panel, 0, 0, 304, "", 1);
-    if (!saved || !network_button(panel, 0, 60, 304, "Connect a New Network", 2)) return false;
-    s_network_saved_label = lv_obj_get_child(saved, 0);
-    lv_label_set_text(s_network_saved_label, "No saved network");
-    s_network_message = lv_label_create(panel);
-    if (!s_network_message) return false;
-    lv_obj_set_pos(s_network_message, 12, 122);
-    lv_obj_set_width(s_network_message, 280);
-    lv_obj_set_style_text_color(s_network_message, lv_color_hex(0xAAB2BF), 0);
-    lv_label_set_text(s_network_message, "");
-    szpi_ui_page_t *pages[] = {&s_network_info_page, &s_network_method_page, &s_network_qr_pages[0], &s_network_qr_pages[1]};
-    const char *titles[] = {"Current Wi-Fi", "Connect", "Easy Connect", "Wi-Fi Hotspot"};
-    for (unsigned i = 0; i < 4; i++) {
-        if (!create_page(pages[i], titles[i], false, "Network")) return false;
-        lv_obj_remove_event_cb(pages[i]->screen, screen_gesture_event);
-        lv_obj_add_event_cb(pages[i]->screen, network_gesture, LV_EVENT_GESTURE, NULL);
-    }
-    lv_obj_t *info_panel = lv_obj_create(s_network_info_page.screen);
-    if (!info_panel) return false;
-    lv_obj_remove_style_all(info_panel);
-    lv_obj_set_pos(info_panel, 8, 32);
-    lv_obj_set_size(info_panel, 304, 208);
-    lv_obj_set_style_pad_all(info_panel, 8, 0);
-    lv_obj_set_style_pad_row(info_panel, 16, 0);
-    lv_obj_set_flex_flow(info_panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(info_panel, LV_DIR_VER);
-    lv_obj_add_flag(info_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    s_network_info_label = lv_label_create(info_panel);
-    if (!s_network_info_label) return false;
-    lv_obj_set_pos(s_network_info_label, 16, 44);
-    lv_obj_set_width(s_network_info_label, 288);
-    lv_obj_set_style_text_color(s_network_info_label, lv_color_hex(0xD7DCE5), 0);
-    s_network_forget_button = network_button(info_panel, 0, 0, 288, "Clear Wi-Fi settings", 5);
-    if (!s_network_forget_button || !network_button(s_network_method_page.screen, 8, 42, 304, "Easy Connect (DPP)", 3) ||
-        !network_button(s_network_method_page.screen, 8, 104, 304, "Wi-Fi Hotspot", 4)) return false;
-    lv_obj_t *hint = lv_label_create(s_network_method_page.screen);
-    if (!hint) return false;
-    lv_obj_set_width(hint, 288);
-    lv_obj_set_pos(hint, 16, 168);
-    lv_label_set_text(hint, "Use Hotspot if your phone does not support Easy Connect.");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0xAAB2BF), 0);
-    for (unsigned i = 0; i < 2; i++) {
-        s_network_dpp = i == 0;
-        s_network_qr = lv_qrcode_create(s_network_qr_page.screen);
-        s_network_qr_text = lv_label_create(s_network_qr_page.screen);
-        if (!s_network_qr || !s_network_qr_text) return false;
-        lv_qrcode_set_size(s_network_qr, s_network_dpp ? 196 : 192);
-        lv_qrcode_set_dark_color(s_network_qr, lv_color_black());
-        lv_qrcode_set_light_color(s_network_qr, lv_color_white());
-        lv_qrcode_set_quiet_zone(s_network_qr, true);
-        lv_obj_set_pos(s_network_qr, s_network_dpp ? 62 : 4, 32);
-        lv_obj_set_pos(s_network_qr_text, s_network_dpp ? 12 : 204, s_network_dpp ? 54 : 34);
-        lv_obj_set_width(s_network_qr_text, s_network_dpp ? 296 : 112);
-        lv_obj_set_style_text_color(s_network_qr_text, lv_color_hex(0xD7DCE5), 0);
-        lv_obj_add_flag(s_network_qr, LV_OBJ_FLAG_GESTURE_BUBBLE);
-        lv_obj_add_flag(s_network_qr_text, LV_OBJ_FLAG_GESTURE_BUBBLE);
-        lv_obj_add_event_cb(s_network_qr_page.screen, network_qr_lifecycle, LV_EVENT_ALL, NULL);
-    }
-    return true;
-}
-
-static void update_network(const szpi_ui_model_t *model)
-{
-    s_network_model = *model;
-    if (!s_network_boot_notice && model->network_supported && model->network_needs_setup && !model->network_has_config) {
-        s_network_boot_notice = true;
-        if (lv_screen_active() == s_home_page.screen) {
-            s_active_detail = SZPI_UI_MENU_NETWORK;
-            s_settings_active = false;
-            lv_screen_load_anim(s_detail_pages[SZPI_UI_MENU_NETWORK].screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
-        }
-    }
-    const char *ssid = model->network_has_config ? model->network_ssid : "No saved network";
-    lv_label_set_text(s_network_saved_label, ssid);
-    char signal[32] = "--", channel[8] = "--";
-    bool details = model->network_connected && model->network_details_valid;
-    if (details) {
-        lv_snprintf(signal, sizeof(signal), "%d dBm (%s)", model->network_rssi,
-            model->network_rssi >= -60 ? "Strong" : model->network_rssi >= -75 ? "Fair" : "Weak");
-        lv_snprintf(channel, sizeof(channel), "%u", model->network_channel);
-    }
-    lv_label_set_text_fmt(s_network_info_label,
-        "SSID: %s\nStatus: %s\nIP: %s\nGateway: %s\nSubnet: %s\nDevice MAC: %s\nAP MAC: %s\nSignal: %s\nChannel: %s",
-        ssid, model->network_connected ? "Connected" : "Offline",
-        details ? model->network_ip : "--", details ? model->network_gateway : "--",
-        details ? model->network_netmask : "--", model->network_mac[0] ? model->network_mac : "--",
-        details ? model->network_bssid : "--", signal, channel);
-    if (!model->network_supported || !model->network_has_config || model->provisioning_active) lv_obj_add_state(s_network_forget_button, LV_STATE_DISABLED);
-    else lv_obj_remove_state(s_network_forget_button, LV_STATE_DISABLED);
-    lv_label_set_text(s_network_message, model->network_supported ? model->provisioning_message : "Preview only. Wi-Fi setup runs on device.");
-    const char *payload = s_network_dpp ? model->setup_dpp_uri : model->setup_wifi_qr;
-    bool qr_ready = model->provisioning_active && model->provisioning_state != 4 && model->provisioning_state != 2 &&
-        payload[0] && (!s_network_dpp || model->dpp_ready);
-    if (qr_ready && strcmp(s_network_qr_payload, payload)) {
-        if (lv_qrcode_update(s_network_qr, payload, strlen(payload)) == LV_RESULT_OK) {
-            lv_snprintf(s_network_qr_payload, sizeof(s_network_qr_payload), "%s", payload);
-        } else { qr_ready = false; s_network_qr_payload[0] = 0; }
-    }
-    if (s_network_dpp && qr_ready) lv_obj_add_flag(s_network_qr_text, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(s_network_qr_text, LV_OBJ_FLAG_HIDDEN);
-    if (qr_ready) lv_obj_remove_flag(s_network_qr, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(s_network_qr, LV_OBJ_FLAG_HIDDEN);
-    if (!model->network_supported) lv_label_set_text(s_network_qr_text, "Preview only\nUse the device for setup.");
-    else if (!model->provisioning_active || model->provisioning_state == 2 || model->provisioning_state == 4 || model->provisioning_state == 5) {
-        lv_label_set_text(s_network_qr_text, model->provisioning_message[0] ? model->provisioning_message : "Setup closed. Return to start again.");
-    } else if (s_network_dpp) {
-        lv_label_set_text(s_network_qr_text, model->dpp_ready ? "Scan with an Easy Connect compatible phone.\n\nNo support? Use Wi-Fi Hotspot." : "Easy Connect unavailable. Return and use Wi-Fi Hotspot.");
-    } else {
-        lv_label_set_text_fmt(s_network_qr_text, "SSID\n%s\n\nPassword\n%s\n\n192.168.4.1", model->setup_ssid, model->setup_password);
+        lv_label_set_text_fmt(s_audio_test_status_label, "%s\nP %u  RMS %u  B %lu",
+            status, (unsigned)model->audio_peak_sample, (unsigned)model->audio_rms_sample,
+            (unsigned long)model->audio_blocks_processed);
     }
 }
 
 static bool create_detail_page(size_t index, const char *title)
 {
     szpi_ui_page_t *page = &s_detail_pages[index];
-    if (!create_page(page, title, false, "Settings")) return false;
+    if (!szpi_ui_page_create(page, title, false, "Settings")) return false;
 
     lv_obj_t *panel = lv_obj_create(page->screen);
     if (panel == NULL) return false;
@@ -674,16 +403,15 @@ static bool create_detail_page(size_t index, const char *title)
                    create_display_row(panel, 86, "Screen", "320 x 240") &&
                    create_display_row(panel, 150, "Theme", "Dark") &&
                    (s_orientation_value = create_display_row(panel, 214, "Orientation", "Auto / 0 deg")) &&
-                   create_display_test(panel);
+                   szpi_ui_display_test_create(panel, page->screen);
         case SZPI_UI_MENU_NETWORK:
-            return create_network(panel);
+            return szpi_ui_network_create(panel, page->screen);
         case SZPI_UI_MENU_AUDIO:
-            return create_slider_row(panel, 0, "Speaker level", 68, 0) &&
-                   create_slider_row(panel, 88, "Microphone gain", 42, 1);
+            return create_slider_row(panel, 0, "Speaker level", 50, 0) &&
+                   create_slider_row(panel, 88, "Microphone gain", 100, 1) &&
+                   create_audio_test(panel, page->screen);
         case SZPI_UI_MENU_STORAGE:
-            return create_switch_row(panel, 0, "Loop recording", false) &&
-                   create_switch_row(panel, 64, "Auto save", true) &&
-                   create_display_row(panel, 128, "Card", "Not connected");
+            return szpi_ui_storage_create(panel);
         case SZPI_UI_MENU_ABOUT:
             return create_display_row(panel, 0, "Device", "SZ-PI") &&
                    create_display_row(panel, 64, "Interface", "Test menu") &&
@@ -693,7 +421,7 @@ static bool create_detail_page(size_t index, const char *title)
     }
 }
 
-static void screen_gesture_event(lv_event_t *event)
+void szpi_ui_screen_gesture_event(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_GESTURE) return;
 
@@ -712,10 +440,6 @@ static void screen_gesture_event(lv_event_t *event)
             lv_screen_load_anim(s_home_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
         }
         /* Consume forward swipes so release cannot become a menu click. */
-        handled = true;
-    } else if (screen == s_display_test_page.screen && direction == LV_DIR_RIGHT) {
-        lv_screen_load_anim(s_detail_pages[SZPI_UI_MENU_DISPLAY].screen,
-                            LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
         handled = true;
     } else {
         for (size_t i = 0; i < SZPI_UI_MENU_COUNT; ++i) {
@@ -747,6 +471,7 @@ static void menu_item_event(lv_event_t *event)
 static void return_to_settings(void)
 {
     if (s_active_detail < 0 || !s_detail_pages[s_active_detail].screen) return;
+    if (s_active_detail == SZPI_UI_MENU_STORAGE) szpi_ui_storage_cancel_confirmation();
     s_active_detail = -1;
     s_settings_active = true;
     lv_screen_load_anim(s_settings_page.screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
@@ -783,8 +508,8 @@ szpi_ui_result_t szpi_ui_create(szpi_ui_event_cb_t event_cb, void *context)
     s_settings_active = false;
     s_active_detail = -1;
 
-    if (!create_page(&s_home_page, "SZ-PI", true, NULL) ||
-        !create_page(&s_settings_page, "Settings", false, "Home") ||
+    if (!szpi_ui_page_create(&s_home_page, "SZ-PI", true, NULL) ||
+        !szpi_ui_page_create(&s_settings_page, "Settings", false, "Home") ||
         !create_settings_menu()) {
         szpi_ui_destroy();
         return SZPI_UI_RESULT_NO_MEMORY;
@@ -816,7 +541,24 @@ szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model)
     time_text[sizeof(time_text) - 1] = '\0';
 
     update_page_status(&s_home_page, model, time_text);
-    update_network(model);
+    bool open_network_setup = szpi_ui_network_update(model);
+    if (open_network_setup && lv_screen_active() == s_home_page.screen) {
+        s_active_detail = SZPI_UI_MENU_NETWORK;
+        s_settings_active = false;
+        lv_screen_load_anim(s_detail_pages[SZPI_UI_MENU_NETWORK].screen,
+                            LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        szpi_ui_slider_test_t *audio_slider = &s_slider_tests[i];
+        int value = i == 0 ? model->speaker_volume_percent : model->microphone_gain_percent;
+        if (value > 100) value = 100;
+        if (lv_slider_get_value(audio_slider->editor_slider) != value) {
+            lv_slider_set_value(audio_slider->editor_slider, value, LV_ANIM_OFF);
+            lv_bar_set_value(audio_slider->preview_bar, value, LV_ANIM_OFF);
+            lv_label_set_text_fmt(audio_slider->preview_value, "%d%%", value);
+            lv_label_set_text_fmt(audio_slider->editor_value, "%d%%", value);
+        }
+    }
     szpi_ui_slider_test_t *brightness = &s_slider_tests[2];
     int percent = model->display_brightness_percent > 100 ? 100 :
         model->display_brightness_percent < 10 ? 10 : model->display_brightness_percent;
@@ -830,53 +572,21 @@ szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model)
         (model->display_inverted ? "Auto / 180 deg" : "Auto / 0 deg") :
         (model->display_inverted ? "180 deg" : "0 deg");
     if (strcmp(lv_label_get_text(s_orientation_value), orientation) != 0) lv_label_set_text(s_orientation_value, orientation);
-    if (s_display_test_running) {
-        char text[sizeof(s_display_test_stats_text)];
-        if (!model->display_test_supported) {
-            lv_snprintf(text, sizeof(text), "Desktop preview\nHardware stats on device");
-        } else if (!model->display_test_valid) {
-            lv_snprintf(text, sizeof(text), "Measuring...");
-        } else {
-            lv_snprintf(text, sizeof(text), "FPS %lu.%lu  TX %lu.%lu/%lu.%lums\nLVGL %lu.%lu  Gap %lu.%lums",
-                (unsigned long)(model->display_fps_x10 / 10), (unsigned long)(model->display_fps_x10 % 10),
-                (unsigned long)(model->display_frame_avg_us / 1000), (unsigned long)(model->display_frame_avg_us % 1000 / 100),
-                (unsigned long)(model->display_frame_max_us / 1000), (unsigned long)(model->display_frame_max_us % 1000 / 100),
-                (unsigned long)(model->display_lvgl_avg_us / 1000), (unsigned long)(model->display_lvgl_avg_us % 1000 / 100),
-                (unsigned long)(model->display_gap_avg_us / 1000), (unsigned long)(model->display_gap_avg_us % 1000 / 100));
-        }
-        if (strcmp(text, s_display_test_stats_text) != 0) {
-            lv_label_set_text(s_display_test_stats_label, text);
-            memcpy(s_display_test_stats_text, text, strlen(text) + 1);
-        }
-    }
+    szpi_ui_display_test_update(model);
+    szpi_ui_storage_update(model);
+    update_audio_test(model);
     return SZPI_UI_RESULT_OK;
 }
 
 void szpi_ui_destroy(void)
 {
-    if (s_display_test_running && s_event_cb != NULL) {
-        s_event_cb(SZPI_UI_EVENT_DISPLAY_TEST_STOP, 0, s_event_context);
-    }
-    if (s_network_page_request) network_emit(SZPI_UI_EVENT_NETWORK_CANCEL);
-    s_network_page_request = 0;
-    szpi_ui_page_t *network_pages[] = {&s_network_info_page, &s_network_method_page, &s_network_qr_pages[0], &s_network_qr_pages[1]};
-    if (s_home_page.screen) lv_screen_load(s_home_page.screen);
-    for (unsigned i = 0; i < 4; i++) {
-        if (network_pages[i]->screen) lv_obj_delete(network_pages[i]->screen);
-        *network_pages[i] = (szpi_ui_page_t){0};
-    }
-    memset(&s_network_model, 0, sizeof(s_network_model));
-    s_network_boot_notice = false;
-    memset(s_network_qr_payloads, 0, sizeof(s_network_qr_payloads));
-    s_display_test_running = false;
-    if (s_display_test_timer != NULL) lv_timer_delete(s_display_test_timer);
-    s_display_test_timer = NULL;
     if (s_home_page.screen != NULL) lv_screen_load(s_home_page.screen);
-    if (s_display_test_page.screen != NULL) lv_obj_delete(s_display_test_page.screen);
-    s_display_test_page = (szpi_ui_page_t){0};
-    s_display_test_area = s_display_test_stats_label = NULL;
-    memset(s_display_test_stripes, 0, sizeof(s_display_test_stripes));
-    s_display_test_stats_text[0] = '\0';
+    szpi_ui_network_destroy();
+    szpi_ui_display_test_destroy();
+    szpi_ui_storage_destroy();
+    if (s_audio_test_page.screen != NULL) lv_obj_delete(s_audio_test_page.screen);
+    s_audio_test_page = (szpi_ui_page_t){0};
+    s_audio_test_status_label = NULL;
     s_event_cb = NULL;
     s_event_context = NULL;
     for (size_t i = 0; i < 3; ++i) {

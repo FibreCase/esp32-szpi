@@ -1,8 +1,10 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <string.h>
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -14,6 +16,9 @@
 
 #define TAG "szpi_audio_svc"
 #define AUDIO_BLOCK_COUNT 100U
+#define CAPTURE_TEST_SECONDS 5U
+#define CAPTURE_TEST_BLOCK_COUNT ((SZPI_AUDIO_SAMPLE_RATE * SZPI_AUDIO_CHANNELS * (SZPI_AUDIO_BITS_PER_SAMPLE / 8U) * CAPTURE_TEST_SECONDS) / SZPI_AUDIO_BLOCK_BYTES)
+#define CAPTURE_TEST_BUFFER_BYTES (CAPTURE_TEST_BLOCK_COUNT * SZPI_AUDIO_BLOCK_BYTES)
 #define TEST_TONE_AMPLITUDE 12000
 
 typedef enum {
@@ -24,13 +29,79 @@ typedef enum {
     AUDIO_CMD_PLAY_LATEST = 4,
     AUDIO_CMD_SET_VOLUME = 5,
     AUDIO_CMD_SET_INPUT_GAIN = 6,
+    AUDIO_CMD_SAVE_SETTINGS = 7,
 } audio_command_t;
 
 static bool s_audio_ready;
 static uint8_t s_playback_volume_percent = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT;
 static uint8_t s_input_gain_db = SZPI_AUDIO_DEFAULT_INPUT_GAIN_DB;
+static uint8_t s_saved_volume_percent = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT;
+static uint8_t s_saved_gain_percent = SZPI_AUDIO_DEFAULT_INPUT_GAIN_PERCENT;
 static bool s_volume_command_pending;
 static bool s_input_gain_command_pending;
+
+static uint8_t gain_percent_to_db(uint8_t percent)
+{
+    return (uint8_t)(((uint16_t)percent * SZPI_AUDIO_MAX_INPUT_GAIN_DB + 50U) / 100U);
+}
+
+static void load_audio_settings(void)
+{
+    uint8_t volume = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT;
+    uint8_t gain_percent = SZPI_AUDIO_DEFAULT_INPUT_GAIN_PERCENT;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("audio", NVS_READONLY, &handle);
+    if (err == ESP_OK) {
+        esp_err_t volume_err = nvs_get_u8(handle, "speaker_pct", &volume);
+        esp_err_t gain_err = nvs_get_u8(handle, "mic_pct", &gain_percent);
+        nvs_close(handle);
+        if (volume_err != ESP_OK && volume_err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "speaker setting load failed: %s", esp_err_to_name(volume_err));
+        }
+        if (gain_err != ESP_OK && gain_err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "microphone setting load failed: %s", esp_err_to_name(gain_err));
+        }
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "audio settings open failed: %s", esp_err_to_name(err));
+    }
+    if (volume > SZPI_AUDIO_MAX_VOLUME_PERCENT) volume = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT;
+    if (gain_percent > 100U) gain_percent = 100U;
+    s_playback_volume_percent = s_saved_volume_percent = volume;
+    s_saved_gain_percent = gain_percent;
+    s_input_gain_db = gain_percent_to_db(gain_percent);
+    if (szpi_audio_status_lock != NULL && xSemaphoreTake(szpi_audio_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
+        szpi_audio_status.output_volume_percent = volume;
+        szpi_audio_status.input_gain_percent = gain_percent;
+        szpi_audio_status.input_gain_db = s_input_gain_db;
+        xSemaphoreGive(szpi_audio_status_lock);
+    }
+}
+
+static void save_audio_settings(void)
+{
+    uint8_t volume;
+    uint8_t gain_percent;
+    if (szpi_audio_status_lock == NULL || xSemaphoreTake(szpi_audio_status_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    volume = szpi_audio_status.output_volume_percent;
+    gain_percent = szpi_audio_status.input_gain_percent;
+    xSemaphoreGive(szpi_audio_status_lock);
+    if (volume == s_saved_volume_percent && gain_percent == s_saved_gain_percent) return;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("audio", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, "speaker_pct", volume);
+        if (err == ESP_OK) err = nvs_set_u8(handle, "mic_pct", gain_percent);
+        if (err == ESP_OK) err = nvs_commit(handle);
+        nvs_close(handle);
+    }
+    if (err == ESP_OK) {
+        s_saved_volume_percent = volume;
+        s_saved_gain_percent = gain_percent;
+    } else {
+        ESP_LOGW(TAG, "audio settings save failed: %s", esp_err_to_name(err));
+    }
+}
 
 static void apply_volume_command(void)
 {
@@ -40,6 +111,7 @@ static void apply_volume_command(void)
         volume = szpi_audio_status.output_volume_percent;
         s_volume_command_pending = false;
         output_active = szpi_audio_status.state == SZPI_AUDIO_SERVICE_PLAYING_TEST ||
+            szpi_audio_status.state == SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST ||
             szpi_audio_status.state == SZPI_AUDIO_SERVICE_PLAYING_FILE;
         xSemaphoreGive(szpi_audio_status_lock);
     }
@@ -149,16 +221,30 @@ static void run_tone_test(void)
 static void run_capture_test(void)
 {
     publish_state(SZPI_AUDIO_SERVICE_CAPTURE_TEST, ESP_OK);
+    int16_t *capture = heap_caps_malloc(CAPTURE_TEST_BUFFER_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (capture == NULL) {
+        publish_state(SZPI_AUDIO_SERVICE_FAULT, ESP_ERR_NO_MEM);
+        return;
+    }
+
     esp_err_t err = szpi_audio_capture_start((float)s_input_gain_db);
+    bool capture_started = err == ESP_OK;
+    bool cancelled = false;
     static int16_t pcm[SZPI_AUDIO_BLOCK_BYTES / sizeof(int16_t)];
     uint64_t sum_squares = 0;
     uint64_t sample_count = 0;
     uint16_t peak = 0;
-    for (uint32_t block = 0; err == ESP_OK && block < AUDIO_BLOCK_COUNT; ++block) {
-        if (take_stop_request()) break;
+    size_t captured_bytes = 0;
+    for (uint32_t block = 0; err == ESP_OK && block < CAPTURE_TEST_BLOCK_COUNT; ++block) {
+        if (take_stop_request()) {
+            cancelled = true;
+            break;
+        }
         size_t read_bytes = 0;
         err = szpi_audio_read(pcm, sizeof(pcm), &read_bytes, pdMS_TO_TICKS(100));
         if (err != ESP_OK || read_bytes != sizeof(pcm)) { if (err == ESP_OK) err = ESP_FAIL; break; }
+        memcpy((uint8_t *)capture + captured_bytes, pcm, read_bytes);
+        captured_bytes += read_bytes;
         size_t samples = read_bytes / sizeof(int16_t);
         for (size_t i = 0; i < samples; ++i) {
             int32_t value = pcm[i];
@@ -174,8 +260,37 @@ static void run_capture_test(void)
             xSemaphoreGive(szpi_audio_status_lock);
         }
     }
-    esp_err_t stop_err = szpi_audio_capture_stop(pdMS_TO_TICKS(500));
-    if (err == ESP_OK) err = stop_err;
+    if (capture_started) {
+        esp_err_t stop_err = szpi_audio_capture_stop(pdMS_TO_TICKS(500));
+        if (err == ESP_OK) err = stop_err;
+    }
+
+    if (err == ESP_OK && !cancelled && captured_bytes == CAPTURE_TEST_BUFFER_BYTES) {
+        publish_state(SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST, ESP_OK);
+        err = szpi_audio_playback_start(s_playback_volume_percent);
+        bool playback_started = err == ESP_OK;
+        for (size_t offset = 0; err == ESP_OK && offset < captured_bytes; offset += SZPI_AUDIO_BLOCK_BYTES) {
+            if (take_stop_request()) {
+                cancelled = true;
+                break;
+            }
+            size_t written = 0;
+            err = szpi_audio_write((const uint8_t *)capture + offset, SZPI_AUDIO_BLOCK_BYTES,
+                &written, pdMS_TO_TICKS(100));
+            if (err == ESP_OK && written != SZPI_AUDIO_BLOCK_BYTES) err = ESP_FAIL;
+            if (err == ESP_OK && szpi_audio_status_lock != NULL && xSemaphoreTake(szpi_audio_status_lock, 0) == pdTRUE) {
+                szpi_audio_status.blocks_processed = (uint32_t)(offset / SZPI_AUDIO_BLOCK_BYTES) + 1U;
+                xSemaphoreGive(szpi_audio_status_lock);
+            }
+        }
+        if (playback_started) {
+            esp_err_t stop_err = szpi_audio_playback_stop(pdMS_TO_TICKS(500));
+            if (err == ESP_OK) err = stop_err;
+        }
+    } else if (err == ESP_OK && !cancelled) {
+        err = ESP_ERR_INVALID_SIZE;
+    }
+    heap_caps_free(capture);
     publish_state(err == ESP_OK ? SZPI_AUDIO_SERVICE_COMPLETE : SZPI_AUDIO_SERVICE_FAULT, err);
 }
 
@@ -353,6 +468,7 @@ void szpi_audio_service_task(void *context)
 {
     (void)context;
     (void)xEventGroupWaitBits(szpi_system_events, SZPI_EVENT_RUNTIME_START, pdFALSE, pdTRUE, portMAX_DELAY);
+    load_audio_settings();
     for (;;) {
         uint32_t command = 0;
         if (xQueueReceive(szpi_audio_queue, &command, portMAX_DELAY) != pdTRUE) continue;
@@ -363,6 +479,10 @@ void szpi_audio_service_task(void *context)
         }
         if (command == AUDIO_CMD_SET_INPUT_GAIN) {
             apply_input_gain_command();
+            continue;
+        }
+        if (command == AUDIO_CMD_SAVE_SETTINGS) {
+            save_audio_settings();
             continue;
         }
         if (!s_audio_ready) {
@@ -392,10 +512,12 @@ void szpi_audio_service_task(void *context)
 static esp_err_t enqueue_audio(audio_command_t command)
 {
     if (szpi_audio_queue == NULL) return ESP_ERR_INVALID_STATE;
-    if (command != AUDIO_CMD_STOP && szpi_audio_status_lock != NULL &&
-        xSemaphoreTake(szpi_audio_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
+    if (command != AUDIO_CMD_STOP) {
+        if (szpi_audio_status_lock == NULL) return ESP_ERR_INVALID_STATE;
+        if (xSemaphoreTake(szpi_audio_status_lock, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
         bool active = szpi_audio_status.state == SZPI_AUDIO_SERVICE_PLAYING_TEST ||
             szpi_audio_status.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST ||
+            szpi_audio_status.state == SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST ||
             szpi_audio_status.state == SZPI_AUDIO_SERVICE_RECORDING ||
             szpi_audio_status.state == SZPI_AUDIO_SERVICE_PLAYING_FILE;
         xSemaphoreGive(szpi_audio_status_lock);
@@ -428,12 +550,13 @@ esp_err_t szpi_app_audio_set_volume(uint8_t volume_percent)
     return ESP_OK;
 }
 
-esp_err_t szpi_app_audio_set_input_gain(uint8_t gain_db)
+static esp_err_t queue_input_gain(uint8_t gain_db, uint8_t gain_percent)
 {
     if (gain_db > SZPI_AUDIO_MAX_INPUT_GAIN_DB || szpi_audio_queue == NULL ||
             szpi_audio_status_lock == NULL) return ESP_ERR_INVALID_ARG;
     if (xSemaphoreTake(szpi_audio_status_lock, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     szpi_audio_status.input_gain_db = gain_db;
+    szpi_audio_status.input_gain_percent = gain_percent;
     if (!s_input_gain_command_pending) {
         uint32_t command = AUDIO_CMD_SET_INPUT_GAIN;
         if (xQueueSend(szpi_audio_queue, &command, 0) != pdTRUE) {
@@ -444,6 +567,27 @@ esp_err_t szpi_app_audio_set_input_gain(uint8_t gain_db)
     }
     xSemaphoreGive(szpi_audio_status_lock);
     return ESP_OK;
+}
+
+esp_err_t szpi_app_audio_set_input_gain(uint8_t gain_db)
+{
+    if (gain_db > SZPI_AUDIO_MAX_INPUT_GAIN_DB) return ESP_ERR_INVALID_ARG;
+    uint8_t gain_percent = (uint8_t)(((uint16_t)gain_db * 100U +
+        SZPI_AUDIO_MAX_INPUT_GAIN_DB / 2U) / SZPI_AUDIO_MAX_INPUT_GAIN_DB);
+    return queue_input_gain(gain_db, gain_percent);
+}
+
+esp_err_t szpi_app_audio_set_input_gain_percent(uint8_t gain_percent)
+{
+    if (gain_percent > 100U) return ESP_ERR_INVALID_ARG;
+    return queue_input_gain(gain_percent_to_db(gain_percent), gain_percent);
+}
+
+esp_err_t szpi_app_audio_save_settings(void)
+{
+    if (szpi_audio_queue == NULL) return ESP_ERR_INVALID_STATE;
+    uint32_t command = AUDIO_CMD_SAVE_SETTINGS;
+    return xQueueSend(szpi_audio_queue, &command, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t szpi_app_audio_get_status(szpi_audio_service_status_t *status)

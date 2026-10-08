@@ -15,7 +15,38 @@ typedef enum {
     SZPI_UI_EVENT_NETWORK_BEGIN,
     SZPI_UI_EVENT_NETWORK_CANCEL,
     SZPI_UI_EVENT_NETWORK_FORGET,
+    SZPI_UI_EVENT_SPEAKER_VOLUME_CHANGED,
+    SZPI_UI_EVENT_SPEAKER_VOLUME_SAVE,
+    SZPI_UI_EVENT_MIC_GAIN_CHANGED,
+    SZPI_UI_EVENT_MIC_GAIN_SAVE,
+    SZPI_UI_EVENT_AUDIO_TEST_TONE,
+    SZPI_UI_EVENT_AUDIO_TEST_CAPTURE,
+    SZPI_UI_EVENT_AUDIO_STOP,
+    SZPI_UI_EVENT_STORAGE_RETRY,
+    SZPI_UI_EVENT_STORAGE_FORMAT,
 } szpi_ui_event_t;
+
+typedef enum {
+    SZPI_UI_AUDIO_OFFLINE,
+    SZPI_UI_AUDIO_IDLE,
+    SZPI_UI_AUDIO_PLAYING_TEST,
+    SZPI_UI_AUDIO_CAPTURE_TEST,
+    SZPI_UI_AUDIO_PLAYING_CAPTURE_TEST,
+    SZPI_UI_AUDIO_RECORDING,
+    SZPI_UI_AUDIO_PLAYING_FILE,
+    SZPI_UI_AUDIO_COMPLETE,
+    SZPI_UI_AUDIO_FAULT,
+} szpi_ui_audio_state_t;
+
+typedef enum {
+    SZPI_UI_STORAGE_UNINITIALIZED,
+    SZPI_UI_STORAGE_NO_CARD,
+    SZPI_UI_STORAGE_CARD_READY_NO_FS,
+    SZPI_UI_STORAGE_READY,
+    SZPI_UI_STORAGE_BUSY,
+    SZPI_UI_STORAGE_FORMATTING,
+    SZPI_UI_STORAGE_FAULT,
+} szpi_ui_storage_state_t;
 
 typedef enum {
     SZPI_UI_RESULT_OK = 0,
@@ -54,6 +85,20 @@ typedef struct {
     char setup_dpp_uri[512];
     bool time_valid;
     char time_text[6];
+    uint8_t speaker_volume_percent;
+    uint8_t microphone_gain_percent;
+    szpi_ui_audio_state_t audio_state;
+    uint32_t audio_blocks_processed;
+    uint16_t audio_peak_sample;
+    uint16_t audio_rms_sample;
+    uint32_t audio_error_code;
+    szpi_ui_storage_state_t storage_state;
+    uint64_t storage_capacity_bytes;
+    uint64_t storage_free_bytes;
+    uint32_t storage_generation;
+    uint32_t storage_max_frequency_khz;
+    uint8_t storage_fat_type;
+    uint32_t storage_error_code;
     uint8_t display_brightness_percent;
     bool display_inverted;
     bool display_test_supported;
@@ -73,10 +118,11 @@ typedef void (*szpi_ui_event_cb_t)(szpi_ui_event_t event, uint32_t value, void *
  * if called before destroy(). update() copies the supplied state. destroy() is
  * idempotent and deletes the UI objects, not the LVGL display. Event callbacks
  * run inline on the LVGL thread and must not perform blocking work.
- * Brightness events carry a percentage (0..100); network cancel/forget carry
- * a local page request identity (cancel) or model generation (forget). Network
- * begin encodes (request identity << 1) | DPP flag.
- * Other events carry zero.
+ * Brightness, speaker volume, and microphone gain change/save events carry
+ * percentages (0..100). Storage format carries the current card generation;
+ * storage retry and test start/stop events carry zero. Network cancel/forget
+ * carry a local page request identity (cancel) or model generation (forget).
+ * Network begin encodes (request identity << 1) | DPP flag.
  */
 szpi_ui_result_t szpi_ui_create(szpi_ui_event_cb_t event_cb, void *context);
 szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model);

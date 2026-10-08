@@ -47,7 +47,9 @@ static void szpi_runtime_record_queue_peaks(void) {}
 #include "../components/szpi_app/src/wifi_service.c"
 
 int64_t esp_timer_get_time(void) { return now; }
-esp_err_t esp_netif_sntp_init(const esp_sntp_config_t *config) { (void)config; return ESP_OK; }
+static unsigned sntp_init_count, sntp_restart_count;
+esp_err_t esp_netif_sntp_init(const esp_sntp_config_t *config) { assert(config->sync_cb); sntp_init_count++; return ESP_OK; }
+esp_err_t esp_netif_sntp_start(void) { sntp_restart_count++; return ESP_OK; }
 esp_err_t szpi_wifi_init(const szpi_wifi_config_t *c, szpi_wifi_event_sink_t sink, void *context) { (void)c; (void)sink; (void)context; return ESP_OK; }
 esp_err_t szpi_wifi_start(void) { return ESP_OK; }
 esp_err_t szpi_wifi_stop(void) { return ESP_OK; }
@@ -106,7 +108,11 @@ int main(void)
     assert(s_prov.active && s_prov.state == SZPI_PROV_SUCCESS && stop_count == 0);
     event_received(&ip); /* Duplicate IP must not write twice. */
     assert(save_count == 1);
+    assert(sntp_init_count == 0); /* Wait until provisioning radio teardown. */
     close_session(true);
+    assert(sntp_init_count == 1);
+    start_time_sync();
+    assert(sntp_restart_count == 1);
     assert(!s_prov.active && s_state == SZPI_WIFI_ONLINE && stop_count == 1);
     setup();
     submit_candidate(&candidate);

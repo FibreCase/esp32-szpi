@@ -243,7 +243,7 @@ Task Watchdog 由任务在约定的有效进展点自行维护，或用适当的
 
 第二阶段附加输入实现见 [QMI8658A / BOOT 任务](develop/task_phase_2_extra.md)：驱动与消抖放 szpi_input，固定资源由 board 管理，同一 UI 任务按周期轮询，触摸 / IMU / 按键独立生命周期与故障状态。主机逻辑测试和构建已通过，实物验收未完成。
 
-第四阶段实现及验证见 [audio / storage 任务](develop/task_phase_4.md) 和[验证记录](develop/phase_4_validation.md)：组件、WAV 初版、Audio/SD UI 与显式确认格式化路径已实现并构建通过。当前 audio service 由 runtime 创建一个 `szpi_audio_rx` 任务处理测试音 / 采集 / WAV 录放；计划中的独立 TX、PSRAM PCM 块池和异步 storage writer 尚未实现，因此长时间录音、满负载并行及 simultaneous TX/RX 仍未验收。
+第四阶段实现及验证见 [audio / storage 任务](develop/task_phase_4.md) 和[验证记录](develop/phase_4_validation.md)：组件、WAV 初版、Audio/SD UI、Audio Test 页面、NVS 音量设置与显式确认格式化路径已实现并构建通过。当前 audio service 由 runtime 创建一个 `szpi_audio_rx` 任务处理测试音 / 采集 / WAV 录放；计划中的独立 TX、PSRAM PCM 块池和异步 storage writer 尚未实现，因此长时间录音、满负载并行及 simultaneous TX/RX 仍未验收。
 
 显示内存布局补充：IDF LVGL target 的内置 128KiB 静态 allocator pool 使用外部 PSRAM BSS，由固件静态拥有；共享 UI 与 simulator 不依赖 ESP 属性。显示 DMA 双缓冲仍使用 INTERNAL | DMA | 8BIT，各 25,600B，归还规则不变。
 

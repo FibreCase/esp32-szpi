@@ -45,17 +45,20 @@ void szpi_storage_service_task(void *context)
             szpi_audio_service_status_t audio = {0};
             (void)szpi_app_audio_get_status(&audio);
             if (audio.state == SZPI_AUDIO_SERVICE_RECORDING || audio.state == SZPI_AUDIO_SERVICE_PLAYING_TEST ||
-                audio.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST || audio.state == SZPI_AUDIO_SERVICE_PLAYING_FILE) {
+                audio.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST || audio.state == SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST ||
+                audio.state == SZPI_AUDIO_SERVICE_PLAYING_FILE) {
                 (void)szpi_app_audio_stop();
                 TickType_t started = xTaskGetTickCount();
                 do {
                     vTaskDelay(pdMS_TO_TICKS(50));
                     (void)szpi_app_audio_get_status(&audio);
                 } while ((audio.state == SZPI_AUDIO_SERVICE_RECORDING || audio.state == SZPI_AUDIO_SERVICE_PLAYING_TEST ||
-                          audio.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST || audio.state == SZPI_AUDIO_SERVICE_PLAYING_FILE) &&
+                          audio.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST || audio.state == SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST ||
+                          audio.state == SZPI_AUDIO_SERVICE_PLAYING_FILE) &&
                          (xTaskGetTickCount() - started) < pdMS_TO_TICKS(5000));
                 if (audio.state == SZPI_AUDIO_SERVICE_RECORDING || audio.state == SZPI_AUDIO_SERVICE_PLAYING_TEST ||
-                    audio.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST || audio.state == SZPI_AUDIO_SERVICE_PLAYING_FILE) {
+                    audio.state == SZPI_AUDIO_SERVICE_CAPTURE_TEST || audio.state == SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST ||
+                    audio.state == SZPI_AUDIO_SERVICE_PLAYING_FILE) {
                     publish_status();
                     ESP_LOGE(TAG, "format refused: audio did not stop within the bounded drain window");
                     continue;

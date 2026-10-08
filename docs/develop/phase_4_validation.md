@@ -10,7 +10,7 @@
 - 根据实板日志修正 SD 路径及清理：直接调用 FatFs 的 `f_mkdir` 使用 `0:/recordings` 逻辑盘路径；SDMMC 释放统一调用一次 `sdmmc_host_deinit()`，避免先删最后一个 slot 后再次删除同一 controller。录音 / 回放 UI 在 FAT32 就绪前禁用，并在音频服务忙时禁用。
 - storage 分阶段初始化 SDMMC 1-bit、diskio、VFS 与 FatFs；普通挂载不自动格式化，挂载后要求 `FS_FAT32`。状态暴露容量、空闲空间、generation 与真实错误。
 - FAT32 格式化由 UI 两步操作确认，并在 storage runtime task 串行执行。实现检查当前 generation、打开文件互斥、MBR/FAT32 容量边界，使用 `f_fdisk` 单分区和显式 `FM_FAT32`、双 FAT、32KiB cluster；完成后重新挂载并进行小文件写读校验。格式化行为尚未对实卡执行。
-- AUDIO 与 SD CARD 验证入口分成独立页面；AUDIO 页面提供 440Hz 测试音、双麦声级采样、停止、WAV 录音 / 最近录音回放，以及麦克风增益（0–36 dB，默认 18 dB）和扬声器音量（0–100%，默认 70%）滑条。调节请求由 audio runtime task 串行应用到正在采集或播放的 codec，也作为后续录音、测试音与 WAV 回放的设置。输入增益提高及两条滑条尚待上板校准。测试音峰值为 12000，并记录 PA 首次开启和 PCM 写错误。SD CARD 页面提供状态 / 容量、重试和双步格式化确认。文件 I/O、mkfs 和阻塞 PCM 操作由 runtime 管理的服务任务处理。
+- AUDIO 与 SD CARD 验证入口分成独立页面；AUDIO 页面提供音量和增益滑条、Audio Test 独立页面（440Hz 测试音、5 秒双麦采样到 PSRAM 后回放、停止和状态显示）、WAV 录音 / 最近录音回放。麦克风测试申请约 960 KB 的 PSRAM PCM 缓冲，只有完整录满才开始回放；申请失败、录制错误或中途停止会跳过回放并释放缓冲。扬声器默认音量 50%，麦克风默认增益 100%（映射为 36dB）；滑条调整实时提交给 audio service，松开或返回时由 audio runtime task 将扬声器与麦克风百分比提交到 `audio` NVS 命名空间。NVS 中无有效值时使用上述默认值。两条滑条和测试页面尚待上板校准。测试音峰值为 12000，并记录 PA 首次开启和 PCM 写错误。SD CARD 页面提供状态 / 容量、重试和双步格式化确认。文件 I/O、mkfs、NVS 写入和阻塞 PCM 操作由 runtime 管理的服务任务处理。
 - 录音生成 `recordings/rec_<uptime>.part`，写占位 PCM WAV 头；录制期间累计更新峰值与 RMS；正常停止后排空当前块、回填 RIFF / data 长度、sync、close 并改名 `.wav`。异常时保留 `.part`。回放解析 RIFF chunk（最多扫描 32 个）、fmt/data、填充字节与参数，支持 48kHz 16bit mono/stereo PCM，mono 复制为双槽输出。
 - 按用户指定的[嘉立创基础外设例程总览](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/base-peripheral-examples.html)核对，并参考其[SD 卡示例](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/sd-card.html)、[ES7210 输入示例](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/audio-input-es7210.html)和[ES8311 输出示例](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/audio-output-es8311.html)。SDMMC 示例提供 1-bit slot、20MHz、引脚绑定和卡信息打印的参考；ES7210 示例采用 48kHz、16-bit、TDM slot0/slot1 与 MCLK×256。实现保留这些接线与初始参数，并复用项目新 I²C。教程里 mount failed 时自动 format 的演示配置未照搬，因本任务要求格式化需显式确认。
 
@@ -22,7 +22,7 @@
 | Codec 依赖 | `espressif/esp_codec_dev` 1.6.2，已写入 manifest 与生成的 `dependencies.lock` |
 | 构建 | `source /home/fibre/.espressif/v6.1/esp-idf/export.sh && idf.py build` 通过 |
 | 干净 defaults | `idf.py -B /tmp/szpi-p4-clean-default -D SDKCONFIG=/tmp/szpi-p4-clean-default/sdkconfig -D SDKCONFIG_DEFAULTS=sdkconfig.defaults build` 通过；临时目录生成独立 sdkconfig |
-| app 镜像 | 最新干净 defaults 构建为 0x15A9D0 bytes；7.9375MiB OTA app 槽余量约 83%；未改分区表 |
+| app 镜像 | 历史干净 defaults 构建为 0x15A9D0 bytes；本次 ESP-IDF 6.1 增量构建为 0x183B60 bytes，7.9375MiB OTA app 槽余量约 81%；未改分区表 |
 | WAV 逻辑测试 | `cc -std=c11 -Wall -Wextra -Werror tests/test_szpi_wav.c components/szpi_app/src/szpi_wav.c -o /tmp/test_szpi_wav` 后运行通过；覆盖头部生成、RIFF 奇数填充块、mono/stereo 与损坏 / 不支持格式 |
 | 其他专项逻辑测试 | FAT mount / format 生命周期、队列所有权、初始化失败清理等 host 测试尚未实现 |
 

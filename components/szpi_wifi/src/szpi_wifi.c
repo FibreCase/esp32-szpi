@@ -24,6 +24,8 @@ static esp_netif_t *s_netif;
 static esp_netif_t *s_ap_netif;
 static bool s_dpp_initialized;
 static atomic_uint s_generation;
+/* Default-loop events publish association state to read-only status queries. */
+static atomic_bool s_associated;
 ESP_EVENT_DEFINE_BASE(SZPI_WIFI_BARRIER);
 static esp_event_handler_instance_t s_barrier_handler;
 static StaticSemaphore_t s_barrier_storage;
@@ -82,13 +84,20 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     if (base == WIFI_EVENT) {
         switch (id) {
         case WIFI_EVENT_STA_START: emit_event(SZPI_WIFI_EVENT_STARTED, 0, NULL); break;
-        case WIFI_EVENT_STA_CONNECTED: emit_event(SZPI_WIFI_EVENT_CONNECTED, 0, NULL); break;
+        case WIFI_EVENT_STA_CONNECTED:
+            atomic_store(&s_associated, true);
+            emit_event(SZPI_WIFI_EVENT_CONNECTED, 0, NULL);
+            break;
         case WIFI_EVENT_STA_DISCONNECTED: {
+            atomic_store(&s_associated, false);
             const wifi_event_sta_disconnected_t *event = data;
             emit_event(SZPI_WIFI_EVENT_DISCONNECTED, event != NULL ? event->reason : 0, NULL);
             break;
         }
-        case WIFI_EVENT_STA_STOP: emit_event(SZPI_WIFI_EVENT_STOPPED, 0, NULL); break;
+        case WIFI_EVENT_STA_STOP:
+            atomic_store(&s_associated, false);
+            emit_event(SZPI_WIFI_EVENT_STOPPED, 0, NULL);
+            break;
         case WIFI_EVENT_AP_STACONNECTED: {
             const wifi_event_ap_staconnected_t *client = data;
             ESP_LOGI(TAG, "hotspot client associated aid=%u", client ? client->aid : 0);
@@ -209,7 +218,10 @@ esp_err_t szpi_wifi_stop(void)
 {
     if (!s_started) return ESP_OK;
     esp_err_t err = esp_wifi_stop();
-    if (err == ESP_OK) s_started = false;
+    if (err == ESP_OK) {
+        s_started = false;
+        atomic_store(&s_associated, false);
+    }
     return err;
 }
 
@@ -235,6 +247,7 @@ esp_err_t szpi_wifi_deinit(void)
 esp_err_t szpi_wifi_get_rssi(int8_t *rssi)
 {
     if (rssi == NULL) return ESP_ERR_INVALID_ARG;
+    if (!atomic_load(&s_associated)) return ESP_ERR_WIFI_NOT_CONNECT;
     wifi_ap_record_t ap = {0};
     esp_err_t err = esp_wifi_sta_get_ap_info(&ap);
     if (err == ESP_OK) *rssi = ap.rssi;
@@ -246,6 +259,7 @@ esp_err_t szpi_wifi_get_link_info(szpi_wifi_link_info_t *info)
     if (!info) return ESP_ERR_INVALID_ARG;
     memset(info, 0, sizeof(*info));
     info->mac_valid = esp_read_mac(info->mac, ESP_MAC_WIFI_STA) == ESP_OK;
+    if (!atomic_load(&s_associated)) return ESP_OK;
     wifi_ap_record_t ap = {0};
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         info->link_valid = true;

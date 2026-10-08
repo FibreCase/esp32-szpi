@@ -13,9 +13,9 @@
 
 - 第二阶段附加任务见 `docs/develop/task_phase_2_extra.md` 与 `docs/develop/phase_2_extra_validation.md`：QMI8658A 与 BOOT 按键已实现并通过 IDF 6.1 构建和主机逻辑测试；仍待板上验证。适配归属 szpi_input，复用 board 新 I²C，由唯一 UI 任务轮询，独立故障降级。
 
-- 第四阶段任务与当前实现见 `docs/develop/task_phase_4.md`、`docs/develop/phase_4_validation.md`：已加入 `szpi_audio` / `szpi_storage` 初版、Audio/SD UI、低幅测试音、MIC 声级检查、PCM WAV `.part` 录制 / 最近文件回放及二次确认 FAT32 格式化入口；IDF 6.1 构建与 WAV 解析 host 测试通过。其他逻辑 / 故障测试和上板验证仍待完成，当前 WAV 写入未使用计划中的 16 块 PSRAM 队列，TX/RX 时钟兼容与同时录放未验收。audio 借用 board 新 I²C 并统一管理 I²S0；storage 管理 SDMMC / FATFS 生命周期。挂载失败不自动格式化，开发阶段不格式化实卡。
+- 第四阶段任务与当前实现见 `docs/develop/task_phase_4.md`、`docs/develop/phase_4_validation.md`：已加入 `szpi_audio` / `szpi_storage` 初版、Audio/SD UI、低幅测试音、5 秒 PSRAM 麦克风录音后回放、Audio Test 页面、NVS 音量设置（扬声器默认 50%、麦克风默认 100%）、PCM WAV `.part` 录制 / 最近文件回放及二次确认 FAT32 格式化入口；IDF 6.1 构建与 WAV 解析 host 测试通过。其他逻辑 / 故障测试和上板验证仍待完成，当前 WAV 写入未使用计划中的 16 块 PSRAM 队列，TX/RX 时钟兼容与同时录放未验收。audio 借用 board 新 I²C 并统一管理 I²S0；storage 管理 SDMMC / FATFS 生命周期。挂载失败不自动格式化，开发阶段不格式化实卡。
 
-- 第五阶段共享 UI 与 Linux 模拟器见 `docs/develop/task_phase_5.md`、`docs/develop/phase_5_validation.md`：页面属于 `szpi_ui`，应用状态转换与操作桥接属于 `szpi_app`；共享页面不得依赖 ESP-IDF 或硬件组件。UI 文案使用英文，字体统一采用 Noto Sans，并以 ASCII 子集嵌入共享源码。当前页面为纯黑背景，顶部状态栏依次显示左侧 Wi-Fi 状态、中央标题和右侧 NTP 同步后的中国标准时间；主页标题为 `SZ-PI`，左划进入设置菜单，点击菜单项打开父菜单右侧的演示详情页，右划返回。信息、开关、滑条均只供 UI 测试，不绑定设备服务；普通菜单页使用滑动动画且不显示返回按钮；滑条卡片提供只读占比预览，点击进入禁用划页手势的独立调节页，通过 Back 按钮返回。应用仍依据 X 轴重力符号进行有滞回的 180° 自动旋转，并同步 LCD 和触摸坐标。模拟器用锁定的 LVGL 9.5.0 与 SDL2。板上与模拟器构建状态分别记录，不将桌面运行视作板上验收。
+- 第五阶段共享 UI 与 Linux 模拟器见 `docs/develop/task_phase_5.md`、`docs/develop/phase_5_validation.md`：页面属于 `szpi_ui`，应用状态转换与操作桥接属于 `szpi_app`；共享页面不得依赖 ESP-IDF 或硬件组件。UI 文案使用英文，字体统一采用 Noto Sans，并以 ASCII 子集嵌入共享源码。当前页面为纯黑背景，顶部状态栏依次显示左侧 Wi-Fi 状态、中央标题和右侧 NTP 同步后的中国标准时间；主页标题为 `SZ-PI`，左划进入设置菜单，点击菜单项打开父菜单右侧详情页，右划返回。Audio 音量滑条、Audio Test 操作和 Storage 状态 / 格式化按钮绑定应用服务；其他演示控件仅供 UI 测试。Storage 格式化需二次确认及当前卡 generation 校验。普通菜单页使用滑动动画且不显示返回按钮；滑条卡片提供只读占比预览，点击进入禁用划页手势的独立调节页，通过 Back 按钮返回。应用仍依据 X 轴重力符号进行有滞回的 180° 自动旋转，并同步 LCD 和触摸坐标。模拟器用锁定的 LVGL 9.5.0 与 SDL2。板上与模拟器构建状态分别记录，不将桌面运行视作板上验收。
 
 ## 结构与边界
 

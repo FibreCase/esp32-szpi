@@ -294,7 +294,7 @@ GC2145 的乐鑫驱动实现 RGB565 / YUV422，sensor 表标记不支持原生 J
 - 初始先分别验证录音与播放，再启用同时收发。第三路 MIC3 回采用于后续 AEC；启用三路时需要重新设计 ES7210 输出槽和播放帧时序，不能只给双通道配置追加一个接收槽。
 - 启动时 PA_EN=0；Codec、时钟及有效数据流准备好后 PA_EN=1。停止播放先关闭功放，再停数据 / 时钟。高开启、低关闭依据 [立创 MP3 官方例程](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/mp3.html)。
 
-初版代码已采用 esp_codec_dev 1.6.2 和 board 新 I²C bus；AUDIO 页提供麦克风输入增益（0–36dB，默认 18dB）和扬声器输出音量（0–100%，默认 70%）滑条。调节通过 audio service 应用到活动采集 / 播放或下次启动。输出启动时先配置 codec 与音量，首个 PCM 写入前才通过 board 语义接口开启 PA，停止 / 写失败时关闭 PA；测试音峰值为 12000/32767。增益范围和听感仍需实物确认。ES7210 RX TDM、ES8311 TX STD 的实际 WS/BCLK 槽时序与同时收发仍未实测，不能视为已校准。AUDIO 和 SD CARD 验证入口分为独立页面；软件构建和未完成项见[第四阶段验证](develop/phase_4_validation.md)。
+初版代码已采用 esp_codec_dev 1.6.2 和 board 新 I²C bus；AUDIO 页提供麦克风输入增益（0–36dB，默认 100% / 36dB）和扬声器输出音量（0–100%，默认 50%）滑条，设置保存至 NVS。调节通过 audio service 应用到活动采集 / 播放或下次启动。Audio Test 页面提供测试音和双麦声级检查：采集 5 秒双通道 PCM 到 PSRAM，随后播放录音缓冲。输出启动时先配置 codec 与音量，首个 PCM 写入前才通过 board 语义接口开启 PA，停止 / 写失败时关闭 PA；测试音峰值为 12000/32767。增益范围和听感仍需实物确认。ES7210 RX TDM、ES8311 TX STD 的实际 WS/BCLK 槽时序与同时收发仍未实测，不能视为已校准。AUDIO 和 SD CARD 验证入口分为独立页面；软件构建和未完成项见[第四阶段验证](develop/phase_4_validation.md)。
 
 ### 上板时的一次性校准
 

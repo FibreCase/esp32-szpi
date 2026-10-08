@@ -148,6 +148,7 @@ static esp_err_t create_runtime_resources(szpi_wifi_service_state_t initial_wifi
     szpi_audio_status = (szpi_audio_service_status_t){
         .state = SZPI_AUDIO_SERVICE_OFFLINE,
         .input_gain_db = SZPI_AUDIO_DEFAULT_INPUT_GAIN_DB,
+        .input_gain_percent = SZPI_AUDIO_DEFAULT_INPUT_GAIN_PERCENT,
         .output_volume_percent = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT,
     };
     return ESP_OK;

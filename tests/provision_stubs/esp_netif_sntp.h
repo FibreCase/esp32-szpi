@@ -5,3 +5,4 @@
 typedef struct { bool wait_for_sync; void (*sync_cb)(struct timeval *); } esp_sntp_config_t;
 #define ESP_NETIF_SNTP_DEFAULT_CONFIG(server) ((esp_sntp_config_t){0})
 esp_err_t esp_netif_sntp_init(const esp_sntp_config_t *config);
+esp_err_t esp_netif_sntp_start(void);

@@ -25,22 +25,38 @@ static szpi_wifi_service_state_t s_state = SZPI_WIFI_STOPPED;
 static uint32_t s_attempts, s_dpp_failures;
 static int64_t s_deadline, s_retry_at, s_session_deadline, s_close_at;
 static esp_err_t s_last_error;
+static int64_t s_time_sync_retry_at;
+static unsigned s_time_sync_retries;
 
 static void time_sync_callback(struct timeval *tv)
 {
     (void)tv;
+    ESP_LOGI(TAG, "SNTP synchronized; epoch=%lld", tv ? (long long)tv->tv_sec : 0LL);
     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_TIME_SYNCED);
+}
+
+static void request_time_sync(void)
+{
+    esp_err_t err;
+    if (s_sntp_initialized) {
+        /* A new network must not inherit the previous retry / hourly timer. */
+        err = esp_netif_sntp_start();
+    } else {
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        config.wait_for_sync = false;
+        config.sync_cb = time_sync_callback;
+        err = esp_netif_sntp_init(&config);
+        if (err == ESP_OK) s_sntp_initialized = true;
+    }
+    if (err == ESP_OK) ESP_LOGI(TAG, "SNTP synchronization requested");
+    else ESP_LOGW(TAG, "SNTP unavailable: %s", esp_err_to_name(err));
+    s_time_sync_retry_at = esp_timer_get_time() + 30000000LL;
 }
 
 static void start_time_sync(void)
 {
-    if (s_sntp_initialized) return;
-    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-    config.wait_for_sync = false;
-    config.sync_cb = time_sync_callback;
-    esp_err_t err = esp_netif_sntp_init(&config);
-    if (err == ESP_OK) s_sntp_initialized = true;
-    else ESP_LOGW(TAG, "SNTP unavailable: %s", esp_err_to_name(err));
+    s_time_sync_retries = 0;
+    request_time_sync();
 }
 
 static void publish(void)
@@ -184,7 +200,7 @@ static void close_session(bool restore)
     memset(&s_prov, 0, sizeof(s_prov));
     s_prov.generation = generation;
     memset(&s_candidate, 0, sizeof(s_candidate));
-    if (committed) { s_state = SZPI_WIFI_ONLINE; publish(); return; }
+    if (committed) { s_state = SZPI_WIFI_ONLINE; publish(); start_time_sync(); return; }
     if (s_started) {
         err = szpi_wifi_stop();
         if (err != ESP_OK) { s_state = SZPI_WIFI_FAILED; s_last_error = err; publish(); return; }
@@ -366,7 +382,7 @@ static void event_received(const szpi_wifi_event_t *event)
             szpi_wifi_status.ip_info = event->ip_info;
             xSemaphoreGive(szpi_wifi_status_lock);
         }
-        start_time_sync();
+        if (!s_prov.active) start_time_sync();
     } else if (event->id == SZPI_WIFI_EVENT_DISCONNECTED || event->id == SZPI_WIFI_EVENT_LOST_IP) {
         ESP_LOGW(TAG, "STA link lost: event=%d reason=%d candidate=%d", event->id, event->disconnect_reason, s_testing);
         if (xSemaphoreTake(szpi_wifi_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -473,6 +489,17 @@ void szpi_wifi_service_task(void *context)
         }
         szpi_wifi_portal_poll();
         int64_t now = esp_timer_get_time();
+        if (s_time_sync_retry_at && now >= s_time_sync_retry_at &&
+            s_state == SZPI_WIFI_ONLINE && !s_prov.active) {
+            s_time_sync_retry_at = 0;
+            if (!(xEventGroupGetBits(szpi_system_events) & SZPI_EVENT_TIME_SYNCED)) {
+                if (s_time_sync_retries < 3) {
+                    ++s_time_sync_retries;
+                    ESP_LOGW(TAG, "Waiting for SNTP; retry=%u", s_time_sync_retries);
+                    request_time_sync();
+                } else ESP_LOGW(TAG, "SNTP not synchronized; check internet access and UDP 123. Background polling continues.");
+            }
+        }
         if (s_close_at && now >= s_close_at) close_session(true);
         else if (s_session_deadline && now >= s_session_deadline && s_prov.state != SZPI_PROV_SUCCESS) close_session(true);
         if ((xEventGroupGetBits(szpi_system_events) & SZPI_EVENT_WIFI_OVERFLOW) != 0) {

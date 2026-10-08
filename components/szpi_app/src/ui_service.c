@@ -8,6 +8,7 @@
 #include "lvgl.h"
 #include "szpi_display.h"
 #include "szpi_input.h"
+#include "szpi_audio.h"
 #include "szpi_ui.h"
 #include "szpi_runtime_internal.h"
 
@@ -114,6 +115,36 @@ static void primary_action_cb(szpi_ui_event_t event, uint32_t value, void *conte
     if (event == SZPI_UI_EVENT_DISPLAY_TEST_START || event == SZPI_UI_EVENT_DISPLAY_TEST_STOP) {
         esp_err_t err = szpi_display_set_test_active(event == SZPI_UI_EVENT_DISPLAY_TEST_START);
         if (err != ESP_OK) ESP_LOGW(TAG, "display test state failed: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_SPEAKER_VOLUME_CHANGED ||
+        event == SZPI_UI_EVENT_MIC_GAIN_CHANGED) {
+        esp_err_t err = event == SZPI_UI_EVENT_SPEAKER_VOLUME_CHANGED ?
+            szpi_app_audio_set_volume((uint8_t)value) :
+            szpi_app_audio_set_input_gain_percent((uint8_t)value);
+        if (err != ESP_OK) ESP_LOGW(TAG, "audio level update rejected: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_SPEAKER_VOLUME_SAVE || event == SZPI_UI_EVENT_MIC_GAIN_SAVE) {
+        esp_err_t err = szpi_app_audio_save_settings();
+        if (err != ESP_OK) ESP_LOGW(TAG, "audio setting save rejected: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_AUDIO_TEST_TONE ||
+        event == SZPI_UI_EVENT_AUDIO_TEST_CAPTURE || event == SZPI_UI_EVENT_AUDIO_STOP) {
+        esp_err_t err = event == SZPI_UI_EVENT_AUDIO_TEST_TONE ? szpi_app_audio_test_tone() :
+            (event == SZPI_UI_EVENT_AUDIO_TEST_CAPTURE ? szpi_app_audio_capture_test() : szpi_app_audio_stop());
+        if (err != ESP_OK) ESP_LOGW(TAG, "audio test request rejected: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_STORAGE_RETRY) {
+        esp_err_t err = szpi_app_storage_retry();
+        if (err != ESP_OK) ESP_LOGW(TAG, "storage retry rejected: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_STORAGE_FORMAT) {
+        esp_err_t err = szpi_app_storage_format_confirmed(value);
+        if (err != ESP_OK) ESP_LOGW(TAG, "storage format request rejected: %s", esp_err_to_name(err));
         return;
     }
     if (event != SZPI_UI_EVENT_PRIMARY_ACTION) return;
@@ -260,6 +291,9 @@ static void update_ui_model(void)
     }
     szpi_ui_model_t model = {
         .display_brightness_percent = s_brightness,
+        .speaker_volume_percent = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT,
+        .microphone_gain_percent = SZPI_AUDIO_DEFAULT_INPUT_GAIN_PERCENT,
+        .audio_state = SZPI_UI_AUDIO_OFFLINE,
         .display_inverted = s_display_inverted,
         .click_count = s_click_count,
         .imu_sequence = s_imu_sample.sequence,
@@ -269,6 +303,48 @@ static void update_ui_model(void)
         .network_connected = (app_events & SZPI_EVENT_NETWORK_READY) != 0,
         .time_valid = time_valid,
     };
+    if (szpi_audio_status_lock != NULL && xSemaphoreTake(szpi_audio_status_lock, 0) == pdTRUE) {
+        szpi_audio_service_status_t audio = szpi_audio_status;
+        xSemaphoreGive(szpi_audio_status_lock);
+        model.speaker_volume_percent = audio.output_volume_percent;
+        model.microphone_gain_percent = audio.input_gain_percent;
+        switch (audio.state) {
+            case SZPI_AUDIO_SERVICE_IDLE: model.audio_state = SZPI_UI_AUDIO_IDLE; break;
+            case SZPI_AUDIO_SERVICE_PLAYING_TEST: model.audio_state = SZPI_UI_AUDIO_PLAYING_TEST; break;
+            case SZPI_AUDIO_SERVICE_CAPTURE_TEST: model.audio_state = SZPI_UI_AUDIO_CAPTURE_TEST; break;
+            case SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST: model.audio_state = SZPI_UI_AUDIO_PLAYING_CAPTURE_TEST; break;
+            case SZPI_AUDIO_SERVICE_RECORDING: model.audio_state = SZPI_UI_AUDIO_RECORDING; break;
+            case SZPI_AUDIO_SERVICE_PLAYING_FILE: model.audio_state = SZPI_UI_AUDIO_PLAYING_FILE; break;
+            case SZPI_AUDIO_SERVICE_COMPLETE: model.audio_state = SZPI_UI_AUDIO_COMPLETE; break;
+            case SZPI_AUDIO_SERVICE_FAULT: model.audio_state = SZPI_UI_AUDIO_FAULT; break;
+            case SZPI_AUDIO_SERVICE_OFFLINE:
+            default: model.audio_state = SZPI_UI_AUDIO_OFFLINE; break;
+        }
+        model.audio_blocks_processed = audio.blocks_processed;
+        model.audio_peak_sample = audio.peak_sample;
+        model.audio_rms_sample = audio.rms_sample;
+        model.audio_error_code = (uint32_t)audio.last_error;
+    }
+    if (szpi_storage_status_lock != NULL && xSemaphoreTake(szpi_storage_status_lock, 0) == pdTRUE) {
+        szpi_storage_status_t storage = szpi_storage_status;
+        xSemaphoreGive(szpi_storage_status_lock);
+        switch (storage.state) {
+            case SZPI_STORAGE_NO_CARD: model.storage_state = SZPI_UI_STORAGE_NO_CARD; break;
+            case SZPI_STORAGE_CARD_READY_NO_FS: model.storage_state = SZPI_UI_STORAGE_CARD_READY_NO_FS; break;
+            case SZPI_STORAGE_READY: model.storage_state = SZPI_UI_STORAGE_READY; break;
+            case SZPI_STORAGE_BUSY: model.storage_state = SZPI_UI_STORAGE_BUSY; break;
+            case SZPI_STORAGE_FORMATTING: model.storage_state = SZPI_UI_STORAGE_FORMATTING; break;
+            case SZPI_STORAGE_FAULT: model.storage_state = SZPI_UI_STORAGE_FAULT; break;
+            case SZPI_STORAGE_UNINITIALIZED:
+            default: model.storage_state = SZPI_UI_STORAGE_UNINITIALIZED; break;
+        }
+        model.storage_capacity_bytes = storage.capacity_bytes;
+        model.storage_free_bytes = storage.free_bytes;
+        model.storage_generation = storage.generation;
+        model.storage_max_frequency_khz = storage.max_frequency_khz;
+        model.storage_fat_type = storage.fat_type;
+        model.storage_error_code = (uint32_t)storage.last_error;
+    }
     szpi_wifi_status_t wifi = {0};
     if (szpi_app_wifi_get_status(&wifi) == ESP_OK) {
         model.network_connected = wifi.state == SZPI_WIFI_ONLINE && wifi.rssi_valid;

@@ -9,6 +9,15 @@ void mock_backend_init(void)
 {
     s_model = (szpi_ui_model_t){
         .display_brightness_percent = 50,
+        .speaker_volume_percent = 50,
+        .microphone_gain_percent = 100,
+        .audio_state = SZPI_UI_AUDIO_IDLE,
+        .storage_state = SZPI_UI_STORAGE_READY,
+        .storage_capacity_bytes = 32ULL * 1024ULL * 1024ULL * 1024ULL,
+        .storage_free_bytes = 24ULL * 1024ULL * 1024ULL * 1024ULL,
+        .storage_generation = 1,
+        .storage_max_frequency_khz = 20000,
+        .storage_fat_type = 3,
         .imu_sequence = 1,
         .accel_g = {0.0f, 0.0f, 1.0f},
         .imu_available = true,
@@ -35,6 +44,23 @@ void mock_backend_handle_event(szpi_ui_event_t event, uint32_t value, void *cont
 {
     (void)context;
     if (event == SZPI_UI_EVENT_BRIGHTNESS_CHANGED && value <= 100) s_model.display_brightness_percent = (uint8_t)(value < 10 ? 10 : value);
+    if (event == SZPI_UI_EVENT_SPEAKER_VOLUME_CHANGED && value <= 100) s_model.speaker_volume_percent = (uint8_t)value;
+    if (event == SZPI_UI_EVENT_MIC_GAIN_CHANGED && value <= 100) s_model.microphone_gain_percent = (uint8_t)value;
+    if (event == SZPI_UI_EVENT_AUDIO_TEST_TONE) s_model.audio_state = SZPI_UI_AUDIO_COMPLETE;
+    if (event == SZPI_UI_EVENT_AUDIO_TEST_CAPTURE) {
+        s_model.audio_state = SZPI_UI_AUDIO_COMPLETE;
+        s_model.audio_blocks_processed = 100;
+        s_model.audio_peak_sample = 0;
+        s_model.audio_rms_sample = 0;
+    }
+    if (event == SZPI_UI_EVENT_AUDIO_STOP) s_model.audio_state = SZPI_UI_AUDIO_IDLE;
+    if (event == SZPI_UI_EVENT_STORAGE_RETRY) s_model.storage_state = SZPI_UI_STORAGE_READY;
+    if (event == SZPI_UI_EVENT_STORAGE_FORMAT && value == s_model.storage_generation) {
+        s_model.storage_state = SZPI_UI_STORAGE_READY;
+        s_model.storage_free_bytes = s_model.storage_capacity_bytes;
+        s_model.storage_fat_type = 3;
+        s_model.storage_generation++;
+    }
     if (event == SZPI_UI_EVENT_PRIMARY_ACTION) s_model.click_count++;
 }
 

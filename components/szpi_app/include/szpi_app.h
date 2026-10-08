@@ -92,6 +92,7 @@ typedef enum {
     SZPI_AUDIO_SERVICE_IDLE,
     SZPI_AUDIO_SERVICE_PLAYING_TEST,
     SZPI_AUDIO_SERVICE_CAPTURE_TEST,
+    SZPI_AUDIO_SERVICE_PLAYING_CAPTURE_TEST,
     SZPI_AUDIO_SERVICE_RECORDING,
     SZPI_AUDIO_SERVICE_PLAYING_FILE,
     SZPI_AUDIO_SERVICE_COMPLETE,
@@ -104,6 +105,7 @@ typedef struct {
     uint16_t peak_sample;
     uint16_t rms_sample;
     uint8_t input_gain_db;
+    uint8_t input_gain_percent;
     uint8_t output_volume_percent;
     uint32_t errors;
     esp_err_t last_error;
@@ -139,6 +141,8 @@ esp_err_t szpi_app_audio_record_start(void);
 esp_err_t szpi_app_audio_play_latest(void);
 esp_err_t szpi_app_audio_set_volume(uint8_t volume_percent);
 esp_err_t szpi_app_audio_set_input_gain(uint8_t gain_db);
+esp_err_t szpi_app_audio_set_input_gain_percent(uint8_t gain_percent);
+esp_err_t szpi_app_audio_save_settings(void);
 esp_err_t szpi_app_audio_stop(void);
 esp_err_t szpi_app_audio_get_status(szpi_audio_service_status_t *status);
 EventGroupHandle_t szpi_app_get_system_events(void);
