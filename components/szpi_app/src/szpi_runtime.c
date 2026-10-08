@@ -7,6 +7,7 @@
 #include "szpi_board.h"
 #include "szpi_display.h"
 #include "szpi_input.h"
+#include "szpi_audio.h"
 #include "szpi_runtime_internal.h"
 
 #define TAG "szpi_runtime"
@@ -15,6 +16,10 @@
 #define WIFI_STACK_BYTES 4096
 #define UI_STACK_BYTES 6144
 #define PREVIEW_STACK_BYTES 4096
+#define STORAGE_STACK_BYTES 4096
+#define STORAGE_QUEUE_DEPTH 8
+#define AUDIO_QUEUE_DEPTH 8
+#define AUDIO_STACK_BYTES 6144
 #define PREVIEW_QUEUE_DEPTH 1
 #define PREVIEW_CMD_START (1U << 0)
 #define PREVIEW_CMD_STOP (1U << 1)
@@ -31,14 +36,24 @@ static StaticTask_t s_supervisor_tcb;
 static StaticTask_t s_wifi_tcb;
 static StaticTask_t s_ui_tcb;
 static StaticTask_t s_preview_tcb;
+static StaticTask_t s_storage_tcb;
+static StaticTask_t s_audio_tcb;
 static StackType_t s_supervisor_stack[SUPERVISOR_STACK_BYTES / sizeof(StackType_t)];
 static StackType_t s_wifi_stack[WIFI_STACK_BYTES / sizeof(StackType_t)];
 static StackType_t s_ui_stack[UI_STACK_BYTES / sizeof(StackType_t)];
 static StackType_t s_preview_stack[PREVIEW_STACK_BYTES / sizeof(StackType_t)];
+static StackType_t s_storage_stack[STORAGE_STACK_BYTES / sizeof(StackType_t)];
+static StackType_t s_audio_stack[AUDIO_STACK_BYTES / sizeof(StackType_t)];
 static StaticQueue_t s_preview_frame_queue_storage;
 static uint8_t s_preview_frame_queue_buffer[PREVIEW_QUEUE_DEPTH * sizeof(szpi_preview_frame_message_t)];
 static StaticQueue_t s_preview_ack_queue_storage;
 static uint8_t s_preview_ack_queue_buffer[PREVIEW_QUEUE_DEPTH * sizeof(szpi_preview_ack_message_t)];
+static StaticQueue_t s_storage_queue_storage;
+static uint8_t s_storage_queue_buffer[STORAGE_QUEUE_DEPTH * 8U];
+static StaticSemaphore_t s_storage_status_mutex_storage;
+static StaticQueue_t s_audio_queue_storage;
+static uint8_t s_audio_queue_buffer[AUDIO_QUEUE_DEPTH * sizeof(uint32_t)];
+static StaticSemaphore_t s_audio_status_mutex_storage;
 QueueHandle_t szpi_wifi_queue;
 QueueHandle_t szpi_supervisor_queue;
 EventGroupHandle_t szpi_system_events;
@@ -51,10 +66,18 @@ QueueHandle_t szpi_preview_ack_queue;
 SemaphoreHandle_t szpi_preview_status_lock;
 szpi_camera_preview_status_t szpi_preview_status;
 TaskHandle_t szpi_preview_task_handle;
+QueueHandle_t szpi_storage_queue;
+SemaphoreHandle_t szpi_storage_status_lock;
+szpi_storage_status_t szpi_storage_status;
+QueueHandle_t szpi_audio_queue;
+SemaphoreHandle_t szpi_audio_status_lock;
+szpi_audio_service_status_t szpi_audio_status;
 static bool s_runtime_started;
 static TaskHandle_t s_supervisor_task_handle;
 static TaskHandle_t s_wifi_task_handle;
 static TaskHandle_t s_ui_task_handle;
+static TaskHandle_t s_storage_task_handle;
+static TaskHandle_t s_audio_task_handle;
 static bool s_ui_enabled;
 static portMUX_TYPE s_peak_mux = portMUX_INITIALIZER_UNLOCKED;
 static UBaseType_t s_wifi_queue_peak;
@@ -91,6 +114,10 @@ static const runtime_resource_descriptor_t s_resource_table[] = {
     {"imu_i2c_device", "szpi_input (borrowed board I2C)", 1},
     {"imu_sample_state", "szpi_input", sizeof(szpi_imu_sample_t)},
     {"boot_gpio_state", "szpi_input", sizeof(szpi_boot_state_t)},
+    {"storage_command_queue", "szpi_app storage service", STORAGE_QUEUE_DEPTH},
+    {"storage_status_mutex", "szpi_app", 1},
+    {"audio_command_queue", "szpi_app audio service", AUDIO_QUEUE_DEPTH},
+    {"audio_status_mutex", "szpi_app", 1},
 };
 
 static esp_err_t create_runtime_resources(szpi_wifi_service_state_t initial_wifi_state)
@@ -105,12 +132,24 @@ static esp_err_t create_runtime_resources(szpi_wifi_service_state_t initial_wifi
     szpi_preview_ack_queue = xQueueCreateStatic(PREVIEW_QUEUE_DEPTH, sizeof(szpi_preview_ack_message_t),
         s_preview_ack_queue_buffer, &s_preview_ack_queue_storage);
     szpi_preview_status_lock = xSemaphoreCreateMutexStatic(&s_preview_status_mutex_storage);
+    szpi_storage_queue = xQueueCreateStatic(STORAGE_QUEUE_DEPTH, 8U, s_storage_queue_buffer, &s_storage_queue_storage);
+    szpi_storage_status_lock = xSemaphoreCreateMutexStatic(&s_storage_status_mutex_storage);
+    szpi_audio_queue = xQueueCreateStatic(AUDIO_QUEUE_DEPTH, sizeof(uint32_t), s_audio_queue_buffer, &s_audio_queue_storage);
+    szpi_audio_status_lock = xSemaphoreCreateMutexStatic(&s_audio_status_mutex_storage);
     if (szpi_wifi_queue == NULL || szpi_supervisor_queue == NULL || szpi_system_events == NULL ||
         szpi_wifi_status_lock == NULL || szpi_ui_status_lock == NULL || szpi_preview_frame_queue == NULL ||
-        szpi_preview_ack_queue == NULL || szpi_preview_status_lock == NULL) return ESP_ERR_NO_MEM;
+        szpi_preview_ack_queue == NULL || szpi_preview_status_lock == NULL || szpi_storage_queue == NULL ||
+        szpi_storage_status_lock == NULL) return ESP_ERR_NO_MEM;
+    if (szpi_audio_queue == NULL || szpi_audio_status_lock == NULL) return ESP_ERR_NO_MEM;
     szpi_wifi_status = (szpi_wifi_status_t){.state = initial_wifi_state};
     szpi_ui_status = (szpi_ui_status_t){.state = SZPI_UI_STOPPED};
     szpi_preview_status = (szpi_camera_preview_status_t){.state = SZPI_CAMERA_PREVIEW_STOPPED};
+    szpi_storage_status = (szpi_storage_status_t){.state = SZPI_STORAGE_UNINITIALIZED};
+    szpi_audio_status = (szpi_audio_service_status_t){
+        .state = SZPI_AUDIO_SERVICE_OFFLINE,
+        .input_gain_db = SZPI_AUDIO_DEFAULT_INPUT_GAIN_DB,
+        .output_volume_percent = SZPI_AUDIO_DEFAULT_VOLUME_PERCENT,
+    };
     return ESP_OK;
 }
 
@@ -131,6 +170,8 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
         {"szpi_wifi", szpi_wifi_service_task, WIFI_STACK_BYTES, 4, tskNO_AFFINITY, wifi_enabled && have_config, s_wifi_stack, &s_wifi_tcb},
         {"szpi_ui", szpi_ui_service_task, UI_STACK_BYTES, 5, tskNO_AFFINITY, ui_enabled, s_ui_stack, &s_ui_tcb},
         {"szpi_preview", szpi_camera_preview_service_task, PREVIEW_STACK_BYTES, 4, tskNO_AFFINITY, ui_enabled, s_preview_stack, &s_preview_tcb},
+        {"szpi_storage", szpi_storage_service_task, STORAGE_STACK_BYTES, 6, tskNO_AFFINITY, ui_enabled, s_storage_stack, &s_storage_tcb},
+        {"szpi_audio_rx", szpi_audio_service_task, AUDIO_STACK_BYTES, 8, tskNO_AFFINITY, ui_enabled, s_audio_stack, &s_audio_tcb},
     };
     for (size_t i = 0; i < sizeof(task_table) / sizeof(task_table[0]); ++i) {
         runtime_task_descriptor_t *task = &task_table[i];
@@ -139,15 +180,22 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
             task->stack_bytes / sizeof(StackType_t), NULL, task->priority,
             task->stack, task->tcb, task->core_id);
         if (handle == NULL) {
-            if (i == 2 || i == 3) {
+            if (i == 2 || i == 3 || i == 4 || i == 5) {
                 if (i == 2) {
                     szpi_ui_status.state = SZPI_UI_DISPLAY_FAULT;
                     szpi_ui_status.last_error = ESP_ERR_NO_MEM;
                     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_DISPLAY_FAULT | SZPI_EVENT_UI_STOPPED);
-                } else {
+                } else if (i == 3) {
                     szpi_preview_status.state = SZPI_CAMERA_PREVIEW_UNAVAILABLE;
                     szpi_preview_status.last_error = ESP_ERR_NO_MEM;
                     szpi_preview_status.error_count++;
+                } else if (i == 4) {
+                    szpi_storage_status.state = SZPI_STORAGE_FAULT;
+                    szpi_storage_status.last_error = ESP_ERR_NO_MEM;
+                } else {
+                    szpi_audio_status.state = SZPI_AUDIO_SERVICE_FAULT;
+                    szpi_audio_status.last_error = ESP_ERR_NO_MEM;
+                    szpi_audio_status.errors++;
                 }
                 ESP_LOGE(TAG, "%s task creation failed; continuing with available services", task->name);
                 continue;
@@ -165,7 +213,9 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
         if (i == 0) s_supervisor_task_handle = handle;
         else if (i == 1) s_wifi_task_handle = handle;
         else if (i == 2) s_ui_task_handle = handle;
-        else szpi_preview_task_handle = handle;
+        else if (i == 3) szpi_preview_task_handle = handle;
+        else if (i == 4) s_storage_task_handle = handle;
+        else s_audio_task_handle = handle;
     }
     return ESP_OK;
 }

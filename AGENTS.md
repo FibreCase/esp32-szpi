@@ -13,6 +13,8 @@
 
 - 第二阶段附加任务见 `docs/develop/task_phase_2_extra.md` 与 `docs/develop/phase_2_extra_validation.md`：QMI8658A 与 BOOT 按键已实现并通过 IDF 6.1 构建和主机逻辑测试；仍待板上验证。适配归属 szpi_input，复用 board 新 I²C，由唯一 UI 任务轮询，独立故障降级。
 
+- 第四阶段任务与当前实现见 `docs/develop/task_phase_4.md`、`docs/develop/phase_4_validation.md`：已加入 `szpi_audio` / `szpi_storage` 初版、Audio/SD UI、低幅测试音、MIC 声级检查、PCM WAV `.part` 录制 / 最近文件回放及二次确认 FAT32 格式化入口；IDF 6.1 构建与 WAV 解析 host 测试通过。其他逻辑 / 故障测试和上板验证仍待完成，当前 WAV 写入未使用计划中的 16 块 PSRAM 队列，TX/RX 时钟兼容与同时录放未验收。audio 借用 board 新 I²C 并统一管理 I²S0；storage 管理 SDMMC / FATFS 生命周期。挂载失败不自动格式化，开发阶段不格式化实卡。
+
 ## 结构与边界
 
 - 依赖方向：`main -> szpi_app -> 外设适配 -> szpi_board`；各层可使用所需 ESP-IDF / 供应商库，禁止循环依赖。

@@ -12,6 +12,16 @@ dependencies:
       path: .
       type: git
     version: b0556a78e13d42974aae19116f8a1e14c29b0f4d
+  espressif/esp_codec_dev:
+    component_hash: 4779f31a3ba3f9b38aee1afe6ccb9ba8f6108dc3a6e77d39d7d714e9a215371b
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.6.2
   espressif/esp_jpeg:
     component_hash: defb83669293cbf86d0fa86b475ba5517aceed04ed70db435388c151ab37b5d7
     dependencies:
@@ -35,8 +45,9 @@ dependencies:
     version: 9.5.0
 direct_dependencies:
 - espressif/esp32-camera
+- espressif/esp_codec_dev
 - idf
 - lvgl/lvgl
-manifest_hash: 326d48c9be999bda1912098fece605ecabdf386ae1ef7badc858cb8014afe0c7
+manifest_hash: be6f5f7f1397b650a682c43271e56bd7f26ec6ba7b8883bfcf7cbd86cc7256b9
 target: esp32s3
 version: 3.0.0

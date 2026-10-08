@@ -2,12 +2,12 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "freertos/FreeRTOS.h"
 #include "esp_err.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
-#include "freertos/FreeRTOS.h"
 
 typedef struct {
     gpio_num_t i2c_sda;
@@ -22,6 +22,14 @@ typedef struct {
     gpio_num_t camera_pclk;
     gpio_num_t camera_xclk;
     gpio_num_t boot_button_gpio;
+    gpio_num_t audio_mclk;
+    gpio_num_t audio_bclk;
+    gpio_num_t audio_ws;
+    gpio_num_t audio_dout;
+    gpio_num_t audio_din;
+    gpio_num_t sd_clk;
+    gpio_num_t sd_cmd;
+    gpio_num_t sd_d0;
     bool boot_button_active_low;
     uint8_t i2c_port;
     uint8_t pca9557_address;
@@ -40,6 +48,8 @@ typedef struct {
     uint8_t camera_sccb_address;
     uint16_t camera_pid;
     uint8_t imu_i2c_address;
+    uint8_t es8311_i2c_address;
+    uint8_t es7210_i2c_address;
 } szpi_board_bindings_t;
 
 // Bindings are immutable. Keep board initialized while any peripheral uses its bus.

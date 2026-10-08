@@ -146,6 +146,8 @@ Q2 为 P 沟道 MOS 管，控制背光高侧供电，GPIO42 侧有 R21 10kΩ 下
 
 DAT1（J3.8）未连接，DAT2（J3.1）、DAT3（J3.2）只有上拉，没有接入主控，因此不能直接配置 4-bit 模式。卡座 CD 检测触点为 NC，没有独立插卡检测 GPIO。R7～R10 为 51kΩ 上拉，分别位于 DAT0、CLK、CMD、DAT3；是否开启额外内部上拉按 SDMMC 驱动要求处理。
 
+当前 `szpi_storage` 初始按 20MHz、1-bit、internal pull-up 配置，挂载路径 `/sdcard`，且只接受 FAT32；挂载失败时保留卡与 diskio 以支持后续显式格式化。SD 总线时钟、卡兼容性、容量和 FAT32 读写尚未上板验证，记录见[第四阶段验证](develop/phase_4_validation.md)。
+
 ### DVP 摄像头
 
 实际摄像头型号为 **GC2145**（用户确认）。当前适配使用固定版本 espressif/esp32-camera 2.1.8；GPIO 接线仍以本板原理图为准，构建与实物探测结果见[第三阶段验证记录](develop/phase_3_validation.md)。
@@ -289,6 +291,8 @@ GC2145 的乐鑫驱动实现 RGB565 / YUV422，sensor 表标记不支持原生 J
 - 音频控制器选择 I2S_NUM_0，优先统一分配 TX/RX 资源。共享 MCLK=38、BCLK=14、WS=13 只能由一个时钟源驱动；初始化 TX/RX 时帧周期和总位数必须匹配。ESP-IDF 6.1 支持符合相同帧时序条件的 STD/TDM 配对，参见 [ESP-IDF I²S 全双工说明](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/i2s.html)。
 - 初始先分别验证录音与播放，再启用同时收发。第三路 MIC3 回采用于后续 AEC；启用三路时需要重新设计 ES7210 输出槽和播放帧时序，不能只给双通道配置追加一个接收槽。
 - 启动时 PA_EN=0；Codec、时钟及有效数据流准备好后 PA_EN=1。停止播放先关闭功放，再停数据 / 时钟。高开启、低关闭依据 [立创 MP3 官方例程](https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/mp3.html)。
+
+初版代码已采用 esp_codec_dev 1.6.2 和 board 新 I²C bus；AUDIO 页提供麦克风输入增益（0–36dB，默认 18dB）和扬声器输出音量（0–100%，默认 70%）滑条。调节通过 audio service 应用到活动采集 / 播放或下次启动。输出启动时先配置 codec 与音量，首个 PCM 写入前才通过 board 语义接口开启 PA，停止 / 写失败时关闭 PA；测试音峰值为 12000/32767。增益范围和听感仍需实物确认。ES7210 RX TDM、ES8311 TX STD 的实际 WS/BCLK 槽时序与同时收发仍未实测，不能视为已校准。AUDIO 和 SD CARD 验证入口分为独立页面；软件构建和未完成项见[第四阶段验证](develop/phase_4_validation.md)。
 
 ### 上板时的一次性校准
 

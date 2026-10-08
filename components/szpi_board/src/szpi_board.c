@@ -32,6 +32,14 @@ static const szpi_board_bindings_t s_bindings = {
     .camera_xclk = GPIO_NUM_5,
     .boot_button_gpio = GPIO_NUM_0,
     .boot_button_active_low = true,
+    .audio_mclk = GPIO_NUM_38,
+    .audio_bclk = GPIO_NUM_14,
+    .audio_ws = GPIO_NUM_13,
+    .audio_dout = GPIO_NUM_45,
+    .audio_din = GPIO_NUM_12,
+    .sd_clk = GPIO_NUM_47,
+    .sd_cmd = GPIO_NUM_48,
+    .sd_d0 = GPIO_NUM_21,
     .i2c_port = I2C_NUM_0,
     .pca9557_address = 0x19,
     .lcd_cs_bit = 0,
@@ -49,6 +57,8 @@ static const szpi_board_bindings_t s_bindings = {
     .camera_sccb_address = 0x3C,
     .camera_pid = 0x2145,
     .imu_i2c_address = 0x6A,
+    .es8311_i2c_address = 0x18,
+    .es7210_i2c_address = 0x41,
 };
 static SemaphoreHandle_t s_lock;
 static StaticSemaphore_t s_lock_storage;

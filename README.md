@@ -78,3 +78,7 @@ LCD 空白屏排查可在 `menuconfig → SZPI display` 覆盖 SPI 频率或模�
 ## 第二阶段附加任务
 
 [QMI8658A 与 BOOT 按键](docs/develop/task_phase_2_extra.md) 已实现六轴采集、静态倾角、按键消抖及输入验证页，复用 board I²C 并由唯一 UI 任务轮询；构建和主机逻辑测试通过，实物验证见[记录](docs/develop/phase_2_extra_validation.md)。
+
+## 第四阶段任务
+
+[audio / storage 与 FAT32 SD 卡](docs/develop/task_phase_4.md) 已有初版实现：ES7210 双麦声级检查、麦克风增益与扬声器音量滑条、ES8311 测试音、PCM WAV 录卡 / 最近文件回放、SDMMC 1-bit FAT32 挂载及双步显式格式化确认。AUDIO 与 SD CARD 验证入口位于独立页面。IDF 6.1 构建通过；分块录音过载恢复、逻辑测试、并行满负载及实物验收仍待完成，详见[第四阶段验证记录](docs/develop/phase_4_validation.md)。启动挂载失败不会自动格式化，开发验证未格式化实卡。

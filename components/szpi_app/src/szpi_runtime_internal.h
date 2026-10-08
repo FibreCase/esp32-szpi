@@ -7,6 +7,7 @@
 #include "szpi_app.h"
 #include "szpi_wifi.h"
 #include "szpi_camera.h"
+#include "szpi_storage.h"
 
 #define SZPI_EVENT_SYSTEM_READY (1U << 0)
 #define SZPI_EVENT_NETWORK_READY (1U << 1)
@@ -42,12 +43,20 @@ extern QueueHandle_t szpi_preview_ack_queue;
 extern SemaphoreHandle_t szpi_preview_status_lock;
 extern szpi_camera_preview_status_t szpi_preview_status;
 extern TaskHandle_t szpi_preview_task_handle;
+extern QueueHandle_t szpi_storage_queue;
+extern SemaphoreHandle_t szpi_storage_status_lock;
+extern szpi_storage_status_t szpi_storage_status;
+extern QueueHandle_t szpi_audio_queue;
+extern SemaphoreHandle_t szpi_audio_status_lock;
+extern szpi_audio_service_status_t szpi_audio_status;
 typedef struct {
     szpi_camera_frame_t frame;
     uint32_t generation;
 } szpi_preview_frame_message_t;
 typedef struct { uint32_t token; uint32_t generation; } szpi_preview_ack_message_t;
 void szpi_camera_preview_service_task(void *context);
+void szpi_storage_service_task(void *context);
+void szpi_audio_service_task(void *context);
 void szpi_wifi_service_task(void *context);
 void szpi_ui_service_task(void *context);
 void szpi_wifi_service_configure(const szpi_wifi_config_t *config);

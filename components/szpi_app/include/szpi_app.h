@@ -8,6 +8,7 @@
 #include "freertos/event_groups.h"
 #include "szpi_wifi.h"
 #include "szpi_camera.h"
+#include "szpi_storage.h"
 
 typedef enum {
     SZPI_WIFI_DISABLED,
@@ -81,6 +82,29 @@ typedef struct {
     esp_err_t last_error;
 } szpi_camera_preview_status_t;
 
+typedef enum {
+    SZPI_AUDIO_SERVICE_OFFLINE,
+    SZPI_AUDIO_SERVICE_IDLE,
+    SZPI_AUDIO_SERVICE_PLAYING_TEST,
+    SZPI_AUDIO_SERVICE_CAPTURE_TEST,
+    SZPI_AUDIO_SERVICE_RECORDING,
+    SZPI_AUDIO_SERVICE_PLAYING_FILE,
+    SZPI_AUDIO_SERVICE_COMPLETE,
+    SZPI_AUDIO_SERVICE_FAULT,
+} szpi_audio_service_state_t;
+
+typedef struct {
+    szpi_audio_service_state_t state;
+    uint32_t blocks_processed;
+    uint16_t peak_sample;
+    uint16_t rms_sample;
+    uint8_t input_gain_db;
+    uint8_t output_volume_percent;
+    uint32_t errors;
+    esp_err_t last_error;
+    char last_file[40];
+} szpi_audio_service_status_t;
+
 // Call once after NVS and board initialization. Creates all enabled project tasks.
 esp_err_t szpi_app_runtime_start(const szpi_wifi_config_t *wifi_config, bool wifi_enabled, bool ui_enabled);
 // Starts only diagnostics after a core boot failure; never publishes SYSTEM_READY.
@@ -99,4 +123,17 @@ esp_err_t szpi_app_camera_preview_start(void);
 esp_err_t szpi_app_camera_preview_request_stop(void);
 esp_err_t szpi_app_camera_preview_stop(TickType_t timeout_ticks);
 esp_err_t szpi_app_camera_preview_get_status(szpi_camera_preview_status_t *status);
+esp_err_t szpi_app_storage_get_status(szpi_storage_status_t *status);
+// Formatting is queued to the runtime storage task. Token must come from a status
+// snapshot taken during the immediately preceding explicit UI confirmation.
+esp_err_t szpi_app_storage_format_confirmed(uint32_t generation);
+esp_err_t szpi_app_storage_retry(void);
+esp_err_t szpi_app_audio_test_tone(void);
+esp_err_t szpi_app_audio_capture_test(void);
+esp_err_t szpi_app_audio_record_start(void);
+esp_err_t szpi_app_audio_play_latest(void);
+esp_err_t szpi_app_audio_set_volume(uint8_t volume_percent);
+esp_err_t szpi_app_audio_set_input_gain(uint8_t gain_db);
+esp_err_t szpi_app_audio_stop(void);
+esp_err_t szpi_app_audio_get_status(szpi_audio_service_status_t *status);
 EventGroupHandle_t szpi_app_get_system_events(void);
