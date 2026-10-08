@@ -16,7 +16,7 @@
 | 板级资源 | components/szpi_board | 引脚绑定、I²C 生命周期、扩展器控制、安全启动状态、硬件资源分配 | 创建 UI、摄像头采集任务、音频业务任务或依赖上层外设组件 |
 | 基础驱动 | ESP-IDF / managed_components / 必要的私有驱动 | SPI、I²S、SDMMC、ST7789、GC2145、音频芯片等实现 | 项目业务策略 |
 
-依赖只能向下：`main -> szpi_app -> 外设适配 -> szpi_board`，各层还可依赖所需 ESP-IDF / 供应商库。跨外设协作放在 `szpi_app`，例如摄像头预览由服务同时调用 camera 与 display，而不是 camera 组件依赖 display。板级组件不调用各外设 init，以免形成循环依赖。
+依赖只能向下：`main -> szpi_app -> szpi_ui -> LVGL`；硬件服务仍按 `szpi_app -> 外设适配 -> szpi_board`。各层还可依赖所需 ESP-IDF / 供应商库。跨外设协作放在 `szpi_app`，例如摄像头预览由服务同时调用 camera 与 display，而不是 camera 组件依赖 display。板级组件不调用各外设 init，以免形成循环依赖。
 
 外设适配组件可以被 main 的单项硬件验证流程直接调用；这不改变依赖方向。暂不建立通用 HAL、插件注册系统或跨层事件总线。第一阶段已有明确 Wi-Fi 需求，增加 szpi_wifi 适配组件与 szpi_app 内的 wifi_service；具体范围见 [第一阶段任务](../task_phase_1.md)。
 
@@ -75,7 +75,7 @@ esp32-szpi/
 └── tools/                            # 出现实际需要时添加验证 / 资源转换工具
 ```
 
-每个实际创建的组件至少包含 `CMakeLists.txt`、`include/<组件名>.h`、`src/`。私有头文件放 `src/`，只有对外契约才放 `include/`。FT6336、按键、IMU 先在 `szpi_input` 内按文件组织；只有出现独立复用或复杂生命周期时再拆组件。第二阶段明确引入 LVGL，绑定放在 `szpi_display` 内，页面及交互流程属于 `szpi_app`。
+每个实际创建的组件至少包含 `CMakeLists.txt`、`include/<组件名>.h`、`src/`。私有头文件放 `src/`，只有对外契约才放 `include/`。FT6336、按键、IMU 先在 `szpi_input` 内按文件组织；只有出现独立复用或复杂生命周期时再拆组件。显示驱动绑定归 `szpi_display`，共享页面、主题、资源和 UI 事件归 `szpi_ui`；应用流程、服务状态转换和操作桥接归 `szpi_app`。共享 UI 只使用标准 C 与 LVGL 类型，不依赖 ESP-IDF、FreeRTOS、GPIO 或硬件组件。IDF 与 Linux 模拟器引用同一份 UI 源文件清单。
 
 优先使用官方驱动：ST7789 用 ESP-IDF esp_lcd，GC2145 用 espressif/esp32-camera，音频优先评估 espressif/esp_codec_dev。FT6336、QMI8658A、PCA9557 评估现成组件的具体器件与 IDF 兼容性，缺失时实现小范围驱动，不复制其他开发板的引脚表。
 
@@ -237,7 +237,7 @@ Task Watchdog 由任务在约定的有效进展点自行维护，或用适当的
 
 硬件事实与默认参数维护在 hardware_io.md；结构与长期规则维护在本文件；AGENTS.md 保留必须遵守的摘要。README 提供使用入口。修改接线、资源分配、接口契约或默认参数时同步相关文档；首次引入新产品功能时补充该功能的数据流、失败策略与验证方法，不预先猜测产品路线。
 
-第二阶段高刷新配置：保持唯一 runtime UI 任务，4ms 周期调度、非阻塞检查命令通知；FreeRTOS tick 为 1000Hz。LVGL 刷新周期 16ms，SPI2 80MHz，两个内部 DMA draw buffer 共 51,200 字节，缓冲归还仍等待完成确认。 应用内 LVGL 页面对象、事件回调和状态绘制集中在 `szpi_app/src/ui_pages.c`；`ui_service.c` 管理 LVGL / display 生命周期、触摸与可选传感器轮询、预览帧和刷新调度。
+第二阶段高刷新配置：保持唯一 runtime UI 任务，4ms 周期调度、非阻塞检查命令通知；FreeRTOS tick 为 1000Hz。LVGL 刷新周期 16ms，SPI2 80MHz，两个内部 DMA draw buffer 共 51,200 字节，缓冲归还仍等待完成确认。共享页面对象、事件回调和状态绘制位于 `szpi_ui`；`szpi_app/src/ui_service.c` 管理板上 LVGL / display 生命周期、触摸输入和刷新调度。
 
 第三阶段由 runtime preview 服务与唯一 UI 任务协作，采用单帧 PSRAM camera buffer 和独立 PSRAM staging；UI 完成复制后由采集任务归还 camera 帧，staging 等上一轮 LCD DMA 完成后才覆盖。依赖任务配置和实测限制记录在 [第三阶段验证](develop/phase_3_validation.md)。
 

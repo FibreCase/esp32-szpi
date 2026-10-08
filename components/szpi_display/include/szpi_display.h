@@ -19,5 +19,7 @@ esp_err_t szpi_display_init(lv_display_t **display);
 esp_err_t szpi_display_wait_flush(TickType_t timeout_ticks);
 esp_err_t szpi_display_get_last_error(void);
 uint32_t szpi_display_get_flush_timeout_count(void);
+// UI-task only; waits for any in-flight DMA before changing the panel's 180-degree orientation.
+esp_err_t szpi_display_set_orientation_inverted(bool inverted);
 esp_err_t szpi_display_set_brightness(uint8_t percent);
 esp_err_t szpi_display_deinit(void);

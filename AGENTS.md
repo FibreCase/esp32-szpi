@@ -6,7 +6,7 @@
 - 接线与默认参数以 `docs/hardware_io.md` 为依据；原理图 `docs/hardware_schematic.pdf` V1.0.1，型号参数来自 `docs/hareware_description.png`，摄像头 GC2145 由用户确认。
 - 结构和长期规范见 `docs/code_architecture.md`。用户已授权查询资料并采用通用初始配置，常规方向 / 频率 / 槽映射在上板时验证，不作为开工前确认阻塞项。
 - 第一阶段范围与验收见根目录 `task_phase_1.md`：基础资源、安全启动、FreeRTOS runtime、Wi-Fi STA / DHCP 及有限重连；实现时遵循其中任务顺序和停止 / 失败策略。
-- 第二阶段范围与验收见 `docs/develop/task_phase_2.md`：ST7789、FT6336、LVGL 与单屏验证 UI。LVGL 绑定在 szpi_display，页面在 szpi_app；唯一 UI 任务由 runtime 创建，遵守 DMA 完成与缓冲归还规则。实现和构建已完成，逻辑测试与上板校准仍待完成，见 `docs/develop/phase_2_validation.md`。
+- 第二阶段范围与验收见 `docs/develop/task_phase_2.md`：ST7789、FT6336、LVGL 与单屏验证 UI。LVGL 显示绑定在 szpi_display，共享页面在 szpi_ui；唯一 UI 任务由 runtime 创建，遵守 DMA 完成与缓冲归还规则。硬件适配和运行时归属见 `docs/develop/phase_2_validation.md` 与第五阶段记录。
 - 第一阶段代码已落在启动装配、`szpi_board`、`szpi_app` 与 `szpi_wifi`；ESP-IDF 6.1 构建通过。逻辑测试与板上验收状态见 `docs/phase_1_validation.md`。规划中的后续组件仍按需求逐步创建，不把计划当成已实现，不添加空组件、占位任务或虚假成功接口。
 
 - 第三阶段实现见 `docs/develop/task_phase_3.md` 与 `docs/develop/phase_3_validation.md`：GC2145 camera、QVGA RGB565 与 LVGL 预览已落代码，IDF 6.1 增量及干净 defaults 构建通过；逻辑测试和上板验证待完成。保持共享新 I²C、单帧 PSRAM、runtime 预览任务与明确的帧 / staging 所有权。
@@ -15,12 +15,15 @@
 
 - 第四阶段任务与当前实现见 `docs/develop/task_phase_4.md`、`docs/develop/phase_4_validation.md`：已加入 `szpi_audio` / `szpi_storage` 初版、Audio/SD UI、低幅测试音、MIC 声级检查、PCM WAV `.part` 录制 / 最近文件回放及二次确认 FAT32 格式化入口；IDF 6.1 构建与 WAV 解析 host 测试通过。其他逻辑 / 故障测试和上板验证仍待完成，当前 WAV 写入未使用计划中的 16 块 PSRAM 队列，TX/RX 时钟兼容与同时录放未验收。audio 借用 board 新 I²C 并统一管理 I²S0；storage 管理 SDMMC / FATFS 生命周期。挂载失败不自动格式化，开发阶段不格式化实卡。
 
+- 第五阶段共享 UI 与 Linux 模拟器见 `docs/develop/task_phase_5.md`、`docs/develop/phase_5_validation.md`：页面属于 `szpi_ui`，应用状态转换与操作桥接属于 `szpi_app`；共享页面不得依赖 ESP-IDF 或硬件组件。UI 文案使用英文，字体统一采用 Noto Sans，并以 ASCII 子集嵌入共享源码。当前页面为 320×240 空白底色、IMU 三轴 g 值与居中按钮；应用依据 X 轴重力符号进行有滞回的 180° 自动旋转，并同步 LCD 和触摸坐标。模拟器用锁定的 LVGL 9.5.0 与 SDL2。板上与模拟器构建状态分别记录，不将桌面运行视作板上验收。
+
 ## 结构与边界
 
-- 依赖方向：`main -> szpi_app -> 外设适配 -> szpi_board`；各层可使用所需 ESP-IDF / 供应商库，禁止循环依赖。
+- 依赖方向：`main -> szpi_app -> szpi_ui -> LVGL`，硬件协作依赖 `szpi_app -> 外设适配 -> szpi_board`；禁止循环依赖。
 - main 只负责启动装配；业务流程和持续任务属于 szpi_app。跨 camera、display、audio、storage 的协作放服务层，不让外设组件互相编排。
 - szpi_board 管理固定接线、共享 I²C、PCA9557、安全输出状态和资源绑定，不依赖上层外设组件。
 - 外设组件按功能创建：szpi_display、szpi_input、szpi_camera、szpi_audio、szpi_storage。先按文件组织小驱动；实际复用或复杂生命周期出现后再拆组件。
+- `szpi_ui` 拥有共享页面、主题、资源与交互事件，不创建任务、不查询服务状态、不访问外设；`szpi_app` 负责把服务状态转成 UI 模型并处理操作请求。页面源码由 ESP-IDF 和 Linux simulator 共用。
 - 组件公共契约放 include，私有实现与头文件放 src。供应商驱动优先复用，不手工修改 managed_components，不建立无实际需求的通用 HAL / 插件 / 事件框架。
 
 ## 硬件资源

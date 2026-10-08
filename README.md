@@ -82,3 +82,21 @@ LCD 空白屏排查可在 `menuconfig → SZPI display` 覆盖 SPI 频率或模�
 ## 第四阶段任务
 
 [audio / storage 与 FAT32 SD 卡](docs/develop/task_phase_4.md) 已有初版实现：ES7210 双麦声级检查、麦克风增益与扬声器音量滑条、ES8311 测试音、PCM WAV 录卡 / 最近文件回放、SDMMC 1-bit FAT32 挂载及双步显式格式化确认。AUDIO 与 SD CARD 验证入口位于独立页面。IDF 6.1 构建通过；分块录音过载恢复、逻辑测试、并行满负载及实物验收仍待完成，详见[第四阶段验证记录](docs/develop/phase_4_validation.md)。启动挂载失败不会自动格式化，开发验证未格式化实卡。
+
+## 配置兼容性说明
+
+LVGL 9.5 的断言、颜色混合舍入、换行字符与主题选项已在 `sdkconfig.defaults` 显式配置；样式缓存保留开启，以维持当前 UI 刷新性能。已有 `sdkconfig` 也需同步这些值。
+
+本机 ESP-IDF 6.1 的 `components/fatfs/Kconfig` 中，`FATFS_PRINT_LLI` 与 `FATFS_PRINT_FLOAT` 的 bool 默认值为非法的 `0`；已修正为 `n`，行为不变。此修正在项目仓库之外，重新安装 SDK 后若再次出现相同警告，需核对这两处默认值。
+
+## 第五阶段：共享 UI 与 Linux 模拟器
+
+共享页面位于 `components/szpi_ui`，当前为 320×240 空白底色、顶部 IMU 三轴 g 值和居中按钮；按钮点击次数作为状态模型更新。`szpi_app` 负责板上 LVGL 任务、触摸输入、IMU 轮询、依据 X 轴加速度自动 180° 旋转和请求桥接，UI 组件不依赖硬件。Linux 模拟器和固件共用 UI 源文件清单，LVGL 固定为 9.5.0，SDL2 使用系统开发包。构建及运行方式和验证边界见[第五阶段记录](docs/develop/phase_5_validation.md)：
+
+```sh
+cmake -S simulator -B simulator/build
+cmake --build simulator/build
+./simulator/build/szpi_ui_sim
+```
+
+Fedora 安装 SDL2 开发包：`sudo dnf install SDL2-devel pkgconf-pkg-config`。模拟器窗口固定为 320×240、1:1 显示且不可调整大小；鼠标点击按钮，B 模拟 BOOT 短按，Esc 退出。UI 使用英文和 Noto Sans，字体以仅含 ASCII 字符的 C 源码嵌入固件与模拟器；生成方式与许可证记录在[第五阶段验证记录](docs/develop/phase_5_validation.md)。

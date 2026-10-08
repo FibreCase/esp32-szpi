@@ -11,12 +11,13 @@
 - 主机测试：`cc -std=c11 -Wall -Wextra -Werror tests/test_szpi_input_extra.c -lm -o /tmp/test_szpi_input_extra && /tmp/test_szpi_input_extra` 通过，覆盖按键抖动、短按 / 长按、启动时按住、计时回绕，以及 IMU 字节解码、灵敏度和倾角有效性。
 - 固件构建：`source /home/fibre/.espressif/v6.1/esp-idf/export.sh && idf.py build` 通过。一次沙箱内构建因组件管理器缓存位于工作区外而无法写入，授权访问缓存后同一构建成功。
 - 干净 defaults：使用独立目录 `/tmp/esp32-szpi-phase2-extra-defaults` 和独立 SDKCONFIG 构建通过；确认从根目录 `sdkconfig.defaults` 生成配置并完成全量构建。
+- 板上姿态符号：用户确认正立时 X≈+1g、倒立时 X≈−1g、水平向上时 Z≈+1g、左侧朝下直立时 Y≈−1g；已同步记录在 `docs/hardware_io.md`。已据此实现 180° 自动旋转及触摸坐标反转，阈值行为待板上复测。
 
 ## 上板验证
 
 以下项目尚未执行，不能由构建或主机测试推断硬件已通过：
 
-- [ ] WHO_AM_I=0x05、静置加速度约 1g、陀螺仪偏置与三轴符号。
+- [ ] WHO_AM_I=0x05、静置加速度幅值与陀螺仪偏置；自动旋转正立 / 倒立切换、滞回区稳定性和触摸命中。
 - [ ] BOOT 短按 / 长按计数、GPIO0 启动与下载模式。
 - [ ] 输入页与触摸、camera 预览、Wi-Fi 并行稳定性。
 - [ ] 启停循环、故障降级、I²C 最大耗时、UI overrun、堆和任务栈余量。

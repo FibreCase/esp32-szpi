@@ -32,6 +32,7 @@ static bool s_ledc_timer_initialized;
 static bool s_ledc_channel_initialized;
 static bool s_cs_selected;
 static bool s_initialized;
+static bool s_orientation_inverted;
 static bool s_flush_inflight;
 static uint32_t s_flush_timeouts;
 static esp_err_t s_last_flush_error;
@@ -205,6 +206,7 @@ esp_err_t szpi_display_init(lv_display_t **display)
     if (err == ESP_OK) err = esp_lcd_panel_set_gap(s_panel, 0, 0);
     if (err == ESP_OK) err = esp_lcd_panel_disp_on_off(s_panel, true);
     if (err != ESP_OK) goto fail;
+    s_orientation_inverted = false;
     err = init_backlight();
     if (err != ESP_OK) goto fail;
 
@@ -248,6 +250,21 @@ uint32_t szpi_display_get_flush_timeout_count(void)
     return s_flush_timeouts;
 }
 
+esp_err_t szpi_display_set_orientation_inverted(bool inverted)
+{
+    if (!s_initialized || s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    if (s_orientation_inverted == inverted) return ESP_OK;
+
+    esp_err_t err = szpi_display_wait_flush(pdMS_TO_TICKS(1000));
+    if (err != ESP_OK) return err;
+
+    // The normal landscape mapping is mirror_x=true, mirror_y=false. Toggle
+    // both MADCTL axes to rotate its physical output by 180 degrees.
+    err = esp_lcd_panel_mirror(s_panel, !inverted, inverted);
+    if (err == ESP_OK) s_orientation_inverted = inverted;
+    return err;
+}
+
 static esp_err_t draw_bitmap(const void *rgb565, uint16_t x1, uint16_t y1,
                              uint16_t x2_exclusive, uint16_t y2_exclusive)
 {
@@ -272,6 +289,7 @@ esp_err_t szpi_display_deinit(void)
     if (s_flush_inflight) return ESP_ERR_INVALID_STATE;
     esp_err_t result = ESP_OK;
     s_initialized = false;
+    s_orientation_inverted = false;
     if (s_display != NULL) {
         lv_display_delete(s_display);
         s_display = NULL;
