@@ -20,25 +20,6 @@
 #define EXPECTED_PSRAM_BYTES (8U * 1024U * 1024U)
 #define OTA_SLOT_BYTES 0x7F0000U
 
-static __attribute__((noinline)) size_t bounded_strlen(const char *value, size_t limit)
-{
-    size_t length = 0;
-    while (length < limit && value[length] != '\0') ++length;
-    return length;
-}
-
-static bool valid_password(const char *password)
-{
-    size_t len = bounded_strlen(password, SZPI_WIFI_PASSWORD_MAX + 1);
-    if (len >= 8 && len <= 63) return true;
-    if (len != 64) return false;
-    for (size_t i = 0; i < len; ++i) {
-        char c = password[i];
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
-    }
-    return true;
-}
-
 static esp_err_t validate_storage(void)
 {
     uint32_t flash_size = 0;
@@ -109,29 +90,11 @@ void app_boot_start(void)
     err = szpi_board_init();
     if (err != ESP_OK) { latch_boot_fault(err); return; }
 
-    szpi_wifi_config_t wifi_config = {0};
-    bool wifi_enabled = CONFIG_SZPI_WIFI_ENABLED;
-#if CONFIG_SZPI_WIFI_ENABLED
-    const char *ssid = CONFIG_SZPI_WIFI_SSID;
-    const char *password = CONFIG_SZPI_WIFI_PASSWORD;
-    size_t ssid_len = bounded_strlen(ssid, SZPI_WIFI_SSID_MAX + 1);
-    size_t password_len = bounded_strlen(password, SZPI_WIFI_PASSWORD_MAX + 1);
-    if (ssid_len > SZPI_WIFI_SSID_MAX) {
-        ESP_LOGE(TAG, "Wi-Fi SSID exceeds 32-byte limit");
-        wifi_config.ssid[0] = 'x';
-    } else if (ssid_len > 0 && !valid_password(password)) {
-        ESP_LOGE(TAG, "Wi-Fi password must be WPA2-PSK (8-63 chars or 64 hex digits)");
-        memcpy(wifi_config.ssid, ssid, ssid_len);
-    } else {
-        memcpy(wifi_config.ssid, ssid, ssid_len);
-        memcpy(wifi_config.password, password, password_len);
-    }
-#endif
-    err = szpi_app_runtime_start(&wifi_config, wifi_enabled, true);
+    /* Wi-Fi owner loads NVS and starts first setup when no station is saved. */
+    err = szpi_app_runtime_start(CONFIG_SZPI_WIFI_ENABLED, true);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "runtime creation failed: %s", esp_err_to_name(err));
         (void)szpi_board_deinit();
         return;
     }
-    if (wifi_enabled && wifi_config.ssid[0] == '\0') ESP_LOGW(TAG, "Wi-Fi is enabled but no SSID is configured");
 }

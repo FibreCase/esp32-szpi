@@ -2,4 +2,4 @@ idf_component_register(SRCS "src/szpi_runtime.c" "src/wifi_service.c" "src/ui_se
                        INCLUDE_DIRS "include"
                        REQUIRES szpi_wifi szpi_display szpi_input szpi_camera szpi_audio szpi_storage freertos esp_common
                        PRIV_INCLUDE_DIRS "src"
-                       PRIV_REQUIRES szpi_board szpi_ui esp_event esp_netif nvs_flash esp_partition esp_psram spi_flash esp_timer)
+                       PRIV_REQUIRES szpi_board szpi_ui esp_wifi esp_event esp_netif nvs_flash esp_partition esp_psram spi_flash esp_timer)

@@ -107,6 +107,10 @@ cmake --build simulator/build
 
 Fedora 安装 SDL2 开发包：`sudo dnf install SDL2-devel pkgconf-pkg-config`。模拟器窗口固定为 320×240、1:1 显示且不可调整大小；鼠标拖动可模拟触摸划页，键盘右方向键进入设置、左方向键返回，B 模拟 BOOT 短按，Esc 退出。UI 使用英文和 Noto Sans，字体以仅含 ASCII 字符的 C 源码嵌入固件与模拟器；生成方式与许可证记录在[第五阶段验证记录](docs/develop/phase_5_validation.md)。模拟器使用主机本地时间；固件使用 SNTP 校时。
 
-LVGL 的 64KiB 静态对象内存池放在 PSRAM；两块 40 行像素 DMA 缓冲仍放内部 RAM。PSRAM 布局释放内部 RAM；40 行双 DMA 配合缓存优化的条纹测试实测约 41.5 FPS，撕裂有所缓解但未消除。
+LVGL 的 128KiB 静态对象内存池放在 PSRAM；两块 40 行像素 DMA 缓冲仍放内部 RAM。PSRAM 布局释放内部 RAM；40 行双 DMA 配合缓存优化的条纹测试实测约 41.5 FPS，撕裂有所缓解但未消除。
 
 PSRAM UI 缓存配置：指令缓存 32KiB、数据缓存 64KiB、数据缓存行 64B。40 行双 DMA 的板上整屏条纹测试约 41.5 FPS；完整记录见显示性能测试文档。
+
+Display 菜单亮度已绑定实际背光，范围 10–100%，点击卡片进入独立滑条页，松手保存到 NVS，重启恢复（默认 50%）。Orientation 显示实际自动旋转朝向；分辨率与 Dark 主题为实际只读信息，FPS / Tearing 继续使用真实显示统计。模拟器仅模拟亮度状态。
+
+首次 Wi-Fi 配网已接入 Settings → Network：当前网络详情（IP、网关、子网、设备 / AP MAC、RSSI 和信道）/ 双步清除、Connect a New Network、DPP 与 WPA2 热点二维码、gzip 单 HTML Captive Portal。启动读取 NVS，无配置时等待用户选择方式；只有进入对应二维码页面才启动 DPP 或热点，两者互斥，右划退出停止配网，无 Cancel 按钮。新网络获得 DHCP 并保存成功后才替换旧配置；失败、取消或超时保留旧配置。热点默认 10 分钟，成功提示 5 秒后关闭。固件 / simulator 构建与主机测试不代表手机兼容性验收；范围与 NVS 加密限制见 [配网设计](docs/develop/wifi_provisioning.md)，测试和板上清单见 [配网验证](docs/develop/wifi_provisioning_validation.md)。

@@ -6,18 +6,10 @@ config SZPI_WIFI_ENABLED
     help
         Enable the configured 2.4 GHz Wi-Fi station service.
 
-config SZPI_WIFI_SSID
-    string "Wi-Fi SSID"
-    default ""
+config SZPI_WIFI_PROVISION_TIMEOUT_S
+    int "Provisioning session timeout (seconds)"
+    range 60 600
+    default 600
     depends on SZPI_WIFI_ENABLED
-    help
-        Local development setting. The value is compiled into the firmware.
-
-config SZPI_WIFI_PASSWORD
-    string "Wi-Fi password"
-    default ""
-    depends on SZPI_WIFI_ENABLED
-    help
-        WPA2-PSK password. The value is compiled into the firmware.
 
 endmenu

@@ -27,10 +27,15 @@ typedef struct {
     esp_netif_ip_info_t ip_info;
     int8_t rssi;
     bool rssi_valid;
+    szpi_wifi_link_info_t link_info;
     int last_disconnect_reason;
     uint32_t attempts;
     esp_err_t last_error;
     uint32_t event_queue_overflows;
+    uint32_t sys_evt_stack_min_bytes;
+    bool has_config;
+    char ssid[33];
+    szpi_provision_status_t provisioning;
 } szpi_wifi_status_t;
 
 typedef enum {
@@ -106,7 +111,7 @@ typedef struct {
 } szpi_audio_service_status_t;
 
 // Call once after NVS and board initialization. Creates all enabled project tasks.
-esp_err_t szpi_app_runtime_start(const szpi_wifi_config_t *wifi_config, bool wifi_enabled, bool ui_enabled);
+esp_err_t szpi_app_runtime_start(bool wifi_enabled, bool ui_enabled);
 // Starts only diagnostics after a core boot failure; never publishes SYSTEM_READY.
 esp_err_t szpi_app_runtime_fault(esp_err_t cause);
 // start/retry enqueue commands and return once accepted; both are task-context APIs.
@@ -137,3 +142,10 @@ esp_err_t szpi_app_audio_set_input_gain(uint8_t gain_db);
 esp_err_t szpi_app_audio_stop(void);
 esp_err_t szpi_app_audio_get_status(szpi_audio_service_status_t *status);
 EventGroupHandle_t szpi_app_get_system_events(void);
+
+/* Nonblocking local GUI commands; candidate testing and NVS mutation run only
+ * on the runtime Wi-Fi owner task. Begin/cancel use a GUI request identity;
+ * forget uses the visible generation. Stale page exits cannot stop a later session. */
+esp_err_t szpi_app_wifi_provision_begin(bool use_dpp, uint32_t request_id);
+esp_err_t szpi_app_wifi_provision_cancel(uint32_t request_id);
+esp_err_t szpi_app_wifi_forget(uint32_t generation);

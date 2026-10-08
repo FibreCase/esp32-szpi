@@ -1,4 +1,5 @@
-#pragma once
+#ifndef SZPI_RUNTIME_INTERNAL_H
+#define SZPI_RUNTIME_INTERNAL_H
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -25,10 +26,14 @@
 #define SZPI_UI_CMD_STOP (1U << 0)
 #define SZPI_UI_CMD_START (1U << 1)
 
-typedef enum { WIFI_MSG_START, WIFI_MSG_STOP, WIFI_MSG_RETRY, WIFI_MSG_EVENT, WIFI_MSG_DIAGNOSTIC } wifi_message_kind_t;
+typedef enum { WIFI_MSG_START, WIFI_MSG_STOP, WIFI_MSG_RETRY, WIFI_MSG_EVENT, WIFI_MSG_DIAGNOSTIC, WIFI_MSG_PROVISION, WIFI_MSG_CANCEL, WIFI_MSG_FORGET, WIFI_MSG_SUBMIT, WIFI_MSG_SCAN } wifi_message_kind_t;
 typedef struct {
     wifi_message_kind_t kind;
     TaskHandle_t waiter;
+    uint32_t generation;
+    bool use_dpp;
+    uint32_t request_id;
+    szpi_wifi_config_t config;
     szpi_wifi_event_t event;
 } wifi_message_t;
 
@@ -60,7 +65,8 @@ void szpi_storage_service_task(void *context);
 void szpi_audio_service_task(void *context);
 void szpi_wifi_service_task(void *context);
 void szpi_ui_service_task(void *context);
-void szpi_wifi_service_configure(const szpi_wifi_config_t *config);
 void szpi_supervisor_task(void *context);
 void szpi_wifi_post_event(const szpi_wifi_event_t *event, void *context);
 void szpi_runtime_record_queue_peaks(void);
+
+#endif

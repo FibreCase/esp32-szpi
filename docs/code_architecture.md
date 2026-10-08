@@ -54,7 +54,7 @@ esp32-szpi/
 │   ├── szpi_camera/                  # GC2145、帧借用 / 归还、PWDN
 │   ├── szpi_audio/                   # ES7210、ES8311、共享 I²S / 时钟、功放
 │   ├── szpi_storage/                 # SD 挂载、NVS 设置与文件访问约束
-│   ├── szpi_wifi/                    # 第一阶段 STA / netif / 事件适配
+│   ├── szpi_wifi/                    # STA / AP / DPP / portal / 凭据适配
 │   └── szpi_app/
 │       ├── include/szpi_app.h
 │       └── src/
@@ -139,8 +139,8 @@ components/szpi_app/src/
 | 任务 | 启用条件 | 初始优先级 | 初始栈预算（字节） | 等待方式 / 职责 |
 | --- | --- | --- | --- | --- |
 | szpi_supervisor | 正式运行流程 | 3 | 4096 | 阻塞等控制 / 故障队列，周期采集资源状态 |
-| szpi_wifi | Wi-Fi 启用且有配置 | 4 | 4096 | 阻塞消息等待，执行连接 / 超时 / 有限重试 |
-| szpi_ui | 显示 / 输入启用 | 5 | 6144 | 输入 / UI 周期等待，统一 UI 调用 |
+| szpi_wifi | Wi-Fi 启用（包含无配置） | 4 | 8192 | 有界消息等待，连接 / 配网 / DNS / 超时 / 有限重试 |
+| szpi_ui | 显示 / 输入启用 | 5 | 8192 | 输入 / UI 周期等待，统一 UI 调用 |
 | szpi_preview | 摄像头预览启用 | 4 | 4096 | 阻塞采集与显示完成通知，管理帧归还 |
 | szpi_audio_rx | 录音启用 | 8 | 6144 | 阻塞 I²S 读取，把有效音频块交给消费者 |
 | szpi_audio_tx | 播放启用 | 8 | 6144 | 阻塞队列 / I²S 写入，维持播放数据流 |
@@ -245,4 +245,12 @@ Task Watchdog 由任务在约定的有效进展点自行维护，或用适当的
 
 第四阶段实现及验证见 [audio / storage 任务](develop/task_phase_4.md) 和[验证记录](develop/phase_4_validation.md)：组件、WAV 初版、Audio/SD UI 与显式确认格式化路径已实现并构建通过。当前 audio service 由 runtime 创建一个 `szpi_audio_rx` 任务处理测试音 / 采集 / WAV 录放；计划中的独立 TX、PSRAM PCM 块池和异步 storage writer 尚未实现，因此长时间录音、满负载并行及 simultaneous TX/RX 仍未验收。
 
-显示内存布局补充：IDF LVGL target 的内置 64KiB 静态 allocator pool 使用外部 PSRAM BSS，由固件静态拥有；共享 UI 与 simulator 不依赖 ESP 属性。显示 DMA 双缓冲仍使用 INTERNAL | DMA | 8BIT，各 25,600B，归还规则不变。
+显示内存布局补充：IDF LVGL target 的内置 128KiB 静态 allocator pool 使用外部 PSRAM BSS，由固件静态拥有；共享 UI 与 simulator 不依赖 ESP 属性。显示 DMA 双缓冲仍使用 INTERNAL | DMA | 8BIT，各 25,600B，归还规则不变。
+
+Display 亮度设置（10–100%，旧 NVS 低值恢复时夹到 10%）：szpi_ui 发出带百分比的 changed/save 请求，szpi_app 唯一 UI 任务在回调外应用 szpi_display 背光接口并管理 NVS display/brightness，成功应用的值写入 UI 模型；松手/返回时仅保存变化值。共享页面不访问 NVS 或 LEDC，模拟器后端仅保留内存状态。
+
+Wi-Fi 配网归属：szpi_app 的唯一 Wi-Fi task 管理 NVS / 状态机、候选连接与提交；szpi_wifi 拥有 STA/AP、DPP、HTTP/DNS 与版本化凭据，HTTP 库任务为依赖例外，DNS 在 owner 上轮询。共享 Network 页面仅使用模型和操作事件。详细契约、超时、内存增加依据和安全边界见 [配网设计](develop/wifi_provisioning.md)。
+
+IDF 默认事件任务 sys_evt 栈为 4096B，DPP callback 的大事件与 queue 消息使用串行回调独占的固定暂存区，不在事件栈上叠加；队列按值复制。运行诊断增加 sys_evt_stack（最小剩余字节），所有 IDF high-water 数值按字节直接使用。板上曾出现点击配网 sys_evt 溢出，修复与复测状态见配网验证记录。
+
+Wi-Fi 配网按页面生命周期启动：Network / 方式选择页不启动服务，DPP QR 页仅运行 STA + DPP，热点 QR 页仅运行 AP+STA / DHCP / DNS / HTTP。页面退出请求带独立 ID，runtime Wi-Fi owner 串行停止旧会话，避免快速导航遗留配网或旧请求停止新会话。

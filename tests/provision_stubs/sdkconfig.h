@@ -1,0 +1,2 @@
+#pragma once
+#define CONFIG_SZPI_WIFI_PROVISION_TIMEOUT_S 600

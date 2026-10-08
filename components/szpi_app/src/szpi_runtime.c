@@ -13,8 +13,8 @@
 #define TAG "szpi_runtime"
 #define QUEUE_DEPTH 16
 #define SUPERVISOR_STACK_BYTES 4096
-#define WIFI_STACK_BYTES 4096
-#define UI_STACK_BYTES 6144
+#define WIFI_STACK_BYTES 8192
+#define UI_STACK_BYTES 8192
 #define PREVIEW_STACK_BYTES 4096
 #define STORAGE_STACK_BYTES 4096
 #define STORAGE_QUEUE_DEPTH 8
@@ -163,11 +163,11 @@ void szpi_runtime_record_queue_peaks(void)
     portEXIT_CRITICAL(&s_peak_mux);
 }
 
-static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabled)
+static esp_err_t create_tasks(bool wifi_enabled, bool ui_enabled)
 {
     runtime_task_descriptor_t task_table[] = {
         {"szpi_supervisor", szpi_supervisor_task, SUPERVISOR_STACK_BYTES, 3, tskNO_AFFINITY, true, s_supervisor_stack, &s_supervisor_tcb},
-        {"szpi_wifi", szpi_wifi_service_task, WIFI_STACK_BYTES, 4, tskNO_AFFINITY, wifi_enabled && have_config, s_wifi_stack, &s_wifi_tcb},
+        {"szpi_wifi", szpi_wifi_service_task, WIFI_STACK_BYTES, 4, tskNO_AFFINITY, wifi_enabled, s_wifi_stack, &s_wifi_tcb},
         {"szpi_ui", szpi_ui_service_task, UI_STACK_BYTES, 5, tskNO_AFFINITY, ui_enabled, s_ui_stack, &s_ui_tcb},
         {"szpi_preview", szpi_camera_preview_service_task, PREVIEW_STACK_BYTES, 4, tskNO_AFFINITY, ui_enabled, s_preview_stack, &s_preview_tcb},
         {"szpi_storage", szpi_storage_service_task, STORAGE_STACK_BYTES, 6, tskNO_AFFINITY, ui_enabled, s_storage_stack, &s_storage_tcb},
@@ -220,15 +220,13 @@ static esp_err_t create_tasks(bool wifi_enabled, bool have_config, bool ui_enabl
     return ESP_OK;
 }
 
-esp_err_t szpi_app_runtime_start(const szpi_wifi_config_t *wifi_config, bool wifi_enabled, bool ui_enabled)
+esp_err_t szpi_app_runtime_start(bool wifi_enabled, bool ui_enabled)
 {
     if (s_runtime_started) return ESP_ERR_INVALID_STATE;
-    bool have_config = wifi_config != NULL && wifi_config->ssid[0] != '\0';
-    szpi_wifi_service_state_t initial_state = !wifi_enabled ? SZPI_WIFI_DISABLED : (have_config ? SZPI_WIFI_STOPPED : SZPI_WIFI_NO_CONFIG);
+    szpi_wifi_service_state_t initial_state = !wifi_enabled ? SZPI_WIFI_DISABLED : SZPI_WIFI_STOPPED;
     ESP_RETURN_ON_ERROR(create_runtime_resources(initial_state), TAG, "create runtime resources");
-    if (have_config) szpi_wifi_service_configure(wifi_config);
     s_ui_enabled = ui_enabled;
-    esp_err_t err = create_tasks(wifi_enabled, have_config, ui_enabled);
+    esp_err_t err = create_tasks(wifi_enabled, ui_enabled);
     if (err != ESP_OK) return err;
     for (size_t i = 0; i < sizeof(s_resource_table) / sizeof(s_resource_table[0]); ++i) {
         ESP_LOGI(TAG, "resource=%s owner=%s capacity=%" PRIu32,
@@ -236,7 +234,7 @@ esp_err_t szpi_app_runtime_start(const szpi_wifi_config_t *wifi_config, bool wif
     }
     s_runtime_started = true;
     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_SYSTEM_READY | SZPI_EVENT_RUNTIME_START);
-    if (wifi_enabled && have_config) {
+    if (wifi_enabled) {
         wifi_message_t message = {.kind = WIFI_MSG_START};
         if (xQueueSend(szpi_wifi_queue, &message, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
         szpi_runtime_record_queue_peaks();
@@ -248,7 +246,7 @@ esp_err_t szpi_app_runtime_fault(esp_err_t cause)
 {
     if (s_runtime_started) return ESP_ERR_INVALID_STATE;
     ESP_RETURN_ON_ERROR(create_runtime_resources(SZPI_WIFI_DISABLED), TAG, "create fault diagnostics");
-    esp_err_t err = create_tasks(false, false, false);
+    esp_err_t err = create_tasks(false, false);
     if (err != ESP_OK) return err;
     s_runtime_started = true;
     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_SYSTEM_FAULT | SZPI_EVENT_RUNTIME_START);
@@ -274,8 +272,10 @@ void szpi_supervisor_task(void *context)
         supervisor_peak = s_supervisor_queue_peak;
         portEXIT_CRITICAL(&s_peak_mux);
         uint32_t failures = 0;
+        uint32_t sys_evt_stack_min = 0;
         if (xSemaphoreTake(szpi_wifi_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
             failures = szpi_wifi_status.state == SZPI_WIFI_FAILED ? 1U : 0U;
+            sys_evt_stack_min = szpi_wifi_status.sys_evt_stack_min_bytes;
             xSemaphoreGive(szpi_wifi_status_lock);
         }
         if (got_error == pdTRUE || failures != last_failures || wifi_peak > 8 || supervisor_peak > 8) {
@@ -286,13 +286,13 @@ void szpi_supervisor_task(void *context)
                 got_error == pdTRUE ? error_code : 0U);
             last_failures = failures;
         } else {
-            ESP_LOGI(TAG, "runtime: internal heap=%" PRIu32 " min=%" PRIu32 " psram heap=%" PRIu32 " min=%" PRIu32 " supervisor_stack=%u wifi_stack=%u ui_stack=%u wifi_queue_peak=%u supervisor_queue_peak=%u",
+            ESP_LOGI(TAG, "runtime: internal heap=%" PRIu32 " min=%" PRIu32 " psram heap=%" PRIu32 " min=%" PRIu32 " supervisor_stack=%u wifi_stack=%u ui_stack=%u sys_evt_stack=%" PRIu32 " wifi_queue_peak=%u supervisor_queue_peak=%u",
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
-                (unsigned)uxTaskGetStackHighWaterMark(s_supervisor_task_handle) * sizeof(StackType_t),
-                s_wifi_task_handle != NULL ? (unsigned)uxTaskGetStackHighWaterMark(s_wifi_task_handle) * sizeof(StackType_t) : 0U,
-                s_ui_task_handle != NULL ? (unsigned)uxTaskGetStackHighWaterMark(s_ui_task_handle) * sizeof(StackType_t) : 0U,
-                (unsigned)wifi_peak, (unsigned)supervisor_peak);
+                (unsigned)uxTaskGetStackHighWaterMark(s_supervisor_task_handle),
+                s_wifi_task_handle != NULL ? (unsigned)uxTaskGetStackHighWaterMark(s_wifi_task_handle) : 0U,
+                s_ui_task_handle != NULL ? (unsigned)uxTaskGetStackHighWaterMark(s_ui_task_handle) : 0U,
+                sys_evt_stack_min, (unsigned)wifi_peak, (unsigned)supervisor_peak);
         }
     }
 }
@@ -315,7 +315,7 @@ esp_err_t szpi_app_wifi_stop(TickType_t timeout_ticks)
     if (!s_runtime_started) return ESP_ERR_INVALID_STATE;
     szpi_wifi_status_t current;
     if (szpi_app_wifi_get_status(&current) != ESP_OK) return ESP_ERR_TIMEOUT;
-    if (current.state == SZPI_WIFI_DISABLED || current.state == SZPI_WIFI_NO_CONFIG) return ESP_OK;
+    if (current.state == SZPI_WIFI_DISABLED || (current.state == SZPI_WIFI_NO_CONFIG && !current.provisioning.active)) return ESP_OK;
     TickType_t maximum_timeout = pdMS_TO_TICKS(3000);
     if (timeout_ticks > maximum_timeout) timeout_ticks = maximum_timeout;
     xEventGroupClearBits(szpi_system_events, SZPI_EVENT_WIFI_STOPPED);
@@ -351,10 +351,11 @@ esp_err_t szpi_app_wifi_get_status(szpi_wifi_status_t *status)
     if (xSemaphoreTake(szpi_wifi_status_lock, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
     *status = szpi_wifi_status;
     xSemaphoreGive(szpi_wifi_status_lock);
-    if (status->state == SZPI_WIFI_ONLINE) {
-        int8_t rssi;
-        if (szpi_wifi_get_rssi(&rssi) == ESP_OK) { status->rssi = rssi; status->rssi_valid = true; }
-    }
+    (void)szpi_wifi_get_link_info(&status->link_info);
+    status->rssi_valid = status->state == SZPI_WIFI_ONLINE && status->link_info.link_valid &&
+        !strcmp(status->ssid, status->link_info.ssid);
+    if (status->rssi_valid) status->rssi = status->link_info.rssi;
+    else memset(&status->ip_info, 0, sizeof(status->ip_info));
     return ESP_OK;
 }
 
@@ -456,3 +457,21 @@ esp_err_t szpi_app_camera_preview_get_status(szpi_camera_preview_status_t *statu
 }
 
 EventGroupHandle_t szpi_app_get_system_events(void) { return szpi_system_events; }
+
+static esp_err_t wifi_local_command(wifi_message_kind_t kind, uint32_t generation)
+{
+    if (!s_wifi_task_handle || !szpi_wifi_queue) return ESP_ERR_INVALID_STATE;
+    wifi_message_t message = {.kind = kind, .generation = generation};
+    if (kind == WIFI_MSG_CANCEL) message.request_id = generation;
+    return xQueueSend(szpi_wifi_queue, &message, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t szpi_app_wifi_provision_begin(bool use_dpp, uint32_t request_id)
+{
+    if (!s_wifi_task_handle || !szpi_wifi_queue) return ESP_ERR_INVALID_STATE;
+    if (!request_id) return ESP_ERR_INVALID_ARG;
+    wifi_message_t message = {.kind = WIFI_MSG_PROVISION, .use_dpp = use_dpp, .request_id = request_id};
+    return xQueueSend(szpi_wifi_queue, &message, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+esp_err_t szpi_app_wifi_provision_cancel(uint32_t request_id) { return wifi_local_command(WIFI_MSG_CANCEL, request_id); }
+esp_err_t szpi_app_wifi_forget(uint32_t generation) { return wifi_local_command(WIFI_MSG_FORGET, generation); }

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -38,6 +39,51 @@ static bool s_display_inverted;
 static bool s_orientation_candidate_inverted;
 static uint8_t s_orientation_candidate_samples;
 static esp_err_t s_orientation_error;
+static uint8_t s_brightness = UI_BRIGHTNESS_PERCENT;
+static uint8_t s_requested_brightness = UI_BRIGHTNESS_PERCENT;
+static uint8_t s_saved_brightness = UI_BRIGHTNESS_PERCENT;
+static bool s_brightness_pending;
+static bool s_brightness_save_pending;
+
+static void load_brightness(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("display", NVS_READONLY, &handle);
+    uint8_t value = UI_BRIGHTNESS_PERCENT;
+    if (err == ESP_OK) {
+        err = nvs_get_u8(handle, "brightness", &value);
+        nvs_close(handle);
+    }
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "brightness load failed: %s", esp_err_to_name(err));
+    }
+    if (err != ESP_OK || value > 100) value = UI_BRIGHTNESS_PERCENT;
+    s_saved_brightness = value;
+    s_brightness = s_requested_brightness = value < 10 ? 10 : value;
+    s_brightness_pending = s_brightness_save_pending = false;
+}
+
+static void apply_brightness_request(void)
+{
+    if (s_brightness_pending) {
+        s_brightness_pending = false;
+        esp_err_t err = szpi_display_set_brightness(s_requested_brightness);
+        if (err == ESP_OK) s_brightness = s_requested_brightness;
+        else ESP_LOGW(TAG, "brightness update failed: %s", esp_err_to_name(err));
+    }
+    if (!s_brightness_save_pending) return;
+    s_brightness_save_pending = false;
+    if (s_brightness == s_saved_brightness) return;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("display", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, "brightness", s_brightness);
+        if (err == ESP_OK) err = nvs_commit(handle);
+        nvs_close(handle);
+    }
+    if (err == ESP_OK) s_saved_brightness = s_brightness;
+    else ESP_LOGW(TAG, "brightness save failed: %s", esp_err_to_name(err));
+}
 
 static void set_ui_state(szpi_ui_state_t state, esp_err_t error)
 {
@@ -48,9 +94,23 @@ static void set_ui_state(szpi_ui_state_t state, esp_err_t error)
     xSemaphoreGive(szpi_ui_status_lock);
 }
 
-static void primary_action_cb(szpi_ui_event_t event, void *context)
+static void primary_action_cb(szpi_ui_event_t event, uint32_t value, void *context)
 {
     (void)context;
+    if (event == SZPI_UI_EVENT_NETWORK_BEGIN || event == SZPI_UI_EVENT_NETWORK_CANCEL || event == SZPI_UI_EVENT_NETWORK_FORGET) {
+        esp_err_t err = event == SZPI_UI_EVENT_NETWORK_BEGIN ? szpi_app_wifi_provision_begin((value & 1U) != 0, value >> 1) :
+            (event == SZPI_UI_EVENT_NETWORK_CANCEL ? szpi_app_wifi_provision_cancel(value) : szpi_app_wifi_forget(value));
+        if (err != ESP_OK) ESP_LOGW(TAG, "network command rejected: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_BRIGHTNESS_CHANGED || event == SZPI_UI_EVENT_BRIGHTNESS_SAVE) {
+        if (value <= 100) {
+            s_requested_brightness = (uint8_t)(value < 10 ? 10 : value);
+            s_brightness_pending = true;
+            if (event == SZPI_UI_EVENT_BRIGHTNESS_SAVE) s_brightness_save_pending = true;
+        }
+        return;
+    }
     if (event == SZPI_UI_EVENT_DISPLAY_TEST_START || event == SZPI_UI_EVENT_DISPLAY_TEST_STOP) {
         esp_err_t err = szpi_display_set_test_active(event == SZPI_UI_EVENT_DISPLAY_TEST_START);
         if (err != ESP_OK) ESP_LOGW(TAG, "display test state failed: %s", esp_err_to_name(err));
@@ -185,6 +245,7 @@ static void poll_imu(void)
 
 static void update_ui_model(void)
 {
+    apply_brightness_request();
     poll_imu();
     EventBits_t app_events = xEventGroupGetBits(szpi_system_events);
     bool time_valid = (app_events & SZPI_EVENT_TIME_SYNCED) != 0;
@@ -198,6 +259,8 @@ static void update_ui_model(void)
         }
     }
     szpi_ui_model_t model = {
+        .display_brightness_percent = s_brightness,
+        .display_inverted = s_display_inverted,
         .click_count = s_click_count,
         .imu_sequence = s_imu_sample.sequence,
         .accel_g = {s_imu_sample.accel_g[0], s_imu_sample.accel_g[1], s_imu_sample.accel_g[2]},
@@ -206,6 +269,37 @@ static void update_ui_model(void)
         .network_connected = (app_events & SZPI_EVENT_NETWORK_READY) != 0,
         .time_valid = time_valid,
     };
+    szpi_wifi_status_t wifi = {0};
+    if (szpi_app_wifi_get_status(&wifi) == ESP_OK) {
+        model.network_connected = wifi.state == SZPI_WIFI_ONLINE && wifi.rssi_valid;
+        model.network_details_valid = model.network_connected;
+        model.network_rssi = wifi.rssi;
+        model.network_channel = wifi.link_info.channel;
+        if (model.network_connected) {
+            snprintf(model.network_ip, sizeof(model.network_ip), IPSTR, IP2STR(&wifi.ip_info.ip));
+            snprintf(model.network_gateway, sizeof(model.network_gateway), IPSTR, IP2STR(&wifi.ip_info.gw));
+            snprintf(model.network_netmask, sizeof(model.network_netmask), IPSTR, IP2STR(&wifi.ip_info.netmask));
+            const uint8_t *b = wifi.link_info.bssid;
+            snprintf(model.network_bssid, sizeof(model.network_bssid), "%02X:%02X:%02X:%02X:%02X:%02X", b[0], b[1], b[2], b[3], b[4], b[5]);
+        }
+        if (wifi.link_info.mac_valid) {
+            const uint8_t *m = wifi.link_info.mac;
+            snprintf(model.network_mac, sizeof(model.network_mac), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
+        }
+        model.network_supported = wifi.state != SZPI_WIFI_DISABLED;
+        model.network_has_config = wifi.has_config;
+        model.network_needs_setup = wifi.state == SZPI_WIFI_NO_CONFIG && !wifi.has_config;
+        memcpy(model.network_ssid, wifi.ssid, sizeof(model.network_ssid));
+        model.provisioning_active = wifi.provisioning.active;
+        model.provisioning_state = wifi.provisioning.state;
+        model.provisioning_generation = wifi.provisioning.generation;
+        model.dpp_ready = wifi.provisioning.dpp_ready;
+        memcpy(model.provisioning_message, wifi.provisioning.message, sizeof(model.provisioning_message));
+        memcpy(model.setup_ssid, wifi.provisioning.ap_ssid, sizeof(model.setup_ssid));
+        memcpy(model.setup_password, wifi.provisioning.ap_password, sizeof(model.setup_password));
+        memcpy(model.setup_wifi_qr, wifi.provisioning.wifi_qr, sizeof(model.setup_wifi_qr));
+        memcpy(model.setup_dpp_uri, wifi.provisioning.dpp_uri, sizeof(model.setup_dpp_uri));
+    }
     memcpy(model.time_text, time_text, sizeof(model.time_text));
     szpi_display_test_stats_t stats = {0};
     model.display_test_supported = true;
@@ -227,6 +321,7 @@ static void update_ui_model(void)
 static esp_err_t initialize_ui(void)
 {
     set_ui_state(SZPI_UI_STARTING, ESP_OK);
+    load_brightness();
     s_touch_faulted = false;
     s_touch_errors = 0;
     s_touch_max_read_duration_us = 0;
@@ -280,7 +375,7 @@ static esp_err_t initialize_ui(void)
     lv_refr_now(s_lv_display);
     err = szpi_display_wait_flush(pdMS_TO_TICKS(1000));
     if (err != ESP_OK) return err;
-    err = szpi_display_set_brightness(UI_BRIGHTNESS_PERCENT);
+    err = szpi_display_set_brightness(s_brightness);
     if (err != ESP_OK) return err;
 
     szpi_imu_info_t imu_info = {0};
@@ -293,7 +388,7 @@ static esp_err_t initialize_ui(void)
 
     set_ui_state(s_touch_faulted ? SZPI_UI_TOUCH_FAULT : SZPI_UI_READY, ESP_OK);
     xEventGroupSetBits(szpi_system_events, SZPI_EVENT_UI_READY);
-    ESP_LOGI(TAG, "initial UI refresh completed; brightness=%u%%", UI_BRIGHTNESS_PERCENT);
+    ESP_LOGI(TAG, "initial UI refresh completed; brightness=%u%%", s_brightness);
     return ESP_OK;
 }
 

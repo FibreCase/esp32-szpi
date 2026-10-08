@@ -42,3 +42,17 @@ npx --yes --package=lv_font_conv@1.5.3 -- lv_font_conv \
 - 状态栏和测试菜单的实际位置、颜色、字体大小，以及 Wi-Fi 状态和 NTP 校时结果；左右划页的板上响应。
 - UI 停止与 DMA 完成时序、内存和任务栈余量。
 - 连续运行 30 分钟及至少 50 次 UI 停止 / 启动。当前页面没有切页，因此切页验收需等产品页面加入后执行。
+
+## Display 菜单实际绑定
+
+Display 新增 Brightness 卡片，显示只读占比条，点击后进入位于右侧的独立大滑条页面；页面禁用导航手势，Back 动画返回 Display，左侧标题为 `< Display`。范围 10–100%；仅 slider 可拖动。Audio 的两个滑条仍为测试值，使用各自父页面返回。
+
+共享事件契约新增 brightness changed/save，回调携带 uint32_t value（百分比）；测试 start/stop 的 value 为 0。事件仍由唯一 LVGL 线程同步发出，应用回调只记录待处理请求。UI 任务下次循环调用 display LEDC brightness 接口；成功后更新模型，失败打印日志并以实际已应用值同步 UI。松手或 Back 请求保存，仅值变更时写 NVS display/brightness 并 commit，不在拖动中逐步写 Flash。启动读 NVS，缺失或非法值回退 50%，读写错误可观察且不擦除 NVS。没有新增任务、队列或 DMA 缓冲。
+
+FPS / Tearing 保留实际采样绑定；Screen 显示固定硬件 320×240，Theme 显示当前唯一 Dark 主题；Orientation 根据应用实际朝向显示 Auto / 0 deg 或 Auto / 180 deg，IMU 不可用时仅显示当前朝向。主题与分辨率是只读信息，不提供伪造的切换能力。Simulator 只模拟亮度值与页面反馈，不访问 LEDC/NVS。新功能上板亮度和重启恢复待验收。
+
+本次 Display 绑定的 IDF 6.1 固件构建与 Linux simulator 构建均通过，diff 空白检查通过。未执行烧录或新增运行测试；硬件亮度、NVS 重启恢复及手势表现待上板确认。
+
+2026-10-08：全部独立调节页大滑条由 264px 缩短为 240px，居中后左右各留 40px，避开触摸边缘死区。亮度 UI / 应用请求 / simulator 下限统一 10%；历史 NVS 值低于 10% 时按 10% 恢复，下次显式保存更新存储值。显示服务仍允许停止流程将背光关闭。固件与模拟器构建、已有共享 UI 回归测试和空白检查通过；端点触摸待上板复测。
+
+2026-10-08：设置详情页按日常设置 / 信息在前、独立测试入口在后的顺序排列。Display 顺序为 Brightness、Screen、Theme、Orientation、FPS / Tearing；测试卡片显式放在最后，避免默认位置把它置于顶部。当前其他共享设置页没有额外独立测试入口。固件与 Linux simulator 构建通过。
