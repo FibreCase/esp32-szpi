@@ -1,3 +1,5 @@
+#include <string.h>
+#include <time.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -179,13 +181,27 @@ static void poll_imu(void)
 static void update_ui_model(void)
 {
     poll_imu();
+    EventBits_t app_events = xEventGroupGetBits(szpi_system_events);
+    bool time_valid = (app_events & SZPI_EVENT_TIME_SYNCED) != 0;
+    char time_text[6] = "--:--";
+    if (time_valid) {
+        time_t now = time(NULL);
+        struct tm local_time;
+        if (now < (time_t)1704067200 || localtime_r(&now, &local_time) == NULL ||
+            strftime(time_text, sizeof(time_text), "%H:%M", &local_time) == 0) {
+            time_valid = false;
+        }
+    }
     szpi_ui_model_t model = {
         .click_count = s_click_count,
         .imu_sequence = s_imu_sample.sequence,
         .accel_g = {s_imu_sample.accel_g[0], s_imu_sample.accel_g[1], s_imu_sample.accel_g[2]},
         .imu_available = s_imu_ready && !s_imu_faulted,
         .imu_valid = s_imu_ready && !s_imu_faulted && s_imu_sample.valid,
+        .network_connected = (app_events & SZPI_EVENT_NETWORK_READY) != 0,
+        .time_valid = time_valid,
     };
+    memcpy(model.time_text, time_text, sizeof(model.time_text));
     if (szpi_ui_status_lock != NULL && xSemaphoreTake(szpi_ui_status_lock, 0) == pdTRUE) {
         szpi_ui_status.click_count = s_click_count;
         xSemaphoreGive(szpi_ui_status_lock);

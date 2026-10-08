@@ -21,6 +21,7 @@
 #define SZPI_EVENT_UI_STOPPED (1U << 9)
 #define SZPI_EVENT_UI_START (1U << 10)
 #define SZPI_EVENT_PREVIEW_STOPPED (1U << 11)
+#define SZPI_EVENT_TIME_SYNCED (1U << 12)
 #define SZPI_UI_CMD_STOP (1U << 0)
 #define SZPI_UI_CMD_START (1U << 1)
 

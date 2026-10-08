@@ -23,6 +23,9 @@ typedef struct {
     float accel_g[3];
     bool imu_available;
     bool imu_valid;
+    bool network_connected;
+    bool time_valid;
+    char time_text[6];
 } szpi_ui_model_t;
 
 typedef void (*szpi_ui_event_cb_t)(szpi_ui_event_t event, void *context);

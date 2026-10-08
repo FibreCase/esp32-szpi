@@ -1,6 +1,9 @@
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_netif_sntp.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -17,7 +20,30 @@ static const uint8_t s_retry_delay_s[] = {1, 2, 4, 8};
 static bool s_adapter_initialized;
 static bool s_driver_started;
 static bool s_stopping;
+static bool s_sntp_initialized;
 static szpi_wifi_config_t s_config;
+
+static void time_sync_callback(struct timeval *tv)
+{
+    (void)tv;
+    xEventGroupSetBits(szpi_system_events, SZPI_EVENT_TIME_SYNCED);
+}
+
+static void start_time_sync(void)
+{
+    if (s_sntp_initialized) return;
+
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    config.wait_for_sync = false;
+    config.sync_cb = time_sync_callback;
+    esp_err_t err = esp_netif_sntp_init(&config);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SNTP initialization failed: %s", esp_err_to_name(err));
+        return;
+    }
+    s_sntp_initialized = true;
+    ESP_LOGI(TAG, "SNTP started with pool.ntp.org");
+}
 
 void szpi_wifi_service_configure(const szpi_wifi_config_t *config)
 {
@@ -72,6 +98,7 @@ static void apply_event(const szpi_wifi_event_t *event)
             xSemaphoreGive(szpi_wifi_status_lock);
         }
         set_state(SZPI_WIFI_ONLINE, ESP_OK);
+        start_time_sync();
         ESP_LOGI(TAG, "DHCP IPv4=" IPSTR " gateway=" IPSTR,
             IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
         break;
@@ -204,6 +231,8 @@ static void stop_driver(void)
 void szpi_wifi_service_task(void *context)
 {
     (void)context;
+    if (setenv("TZ", "CST-8", 1) == 0) tzset();
+    else ESP_LOGW(TAG, "could not set local timezone; displaying UTC time");
     (void)xEventGroupWaitBits(szpi_system_events, SZPI_EVENT_RUNTIME_START, pdFALSE, pdTRUE, portMAX_DELAY);
     for (;;) {
         wifi_message_t message;

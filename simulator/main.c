@@ -14,6 +14,45 @@ typedef struct {
     bool running;
 } simulator_context_t;
 
+static void push_simulated_swipe(bool swipe_right)
+{
+    SDL_Window *window = SDL_GetKeyboardFocus();
+    if (window == NULL) window = SDL_GetMouseFocus();
+    if (window == NULL) return;
+
+    Uint32 window_id = SDL_GetWindowID(window);
+    int16_t start_x = swipe_right ? 48 : 272;
+    int16_t end_x = swipe_right ? 272 : 48;
+    const int16_t y = 120;
+    SDL_Event event = {0};
+
+    event.type = SDL_MOUSEBUTTONDOWN;
+    event.button.windowID = window_id;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.state = SDL_PRESSED;
+    event.button.x = start_x;
+    event.button.y = y;
+    (void)SDL_PushEvent(&event);
+
+    event = (SDL_Event){0};
+    event.type = SDL_MOUSEMOTION;
+    event.motion.windowID = window_id;
+    event.motion.state = SDL_BUTTON_LMASK;
+    event.motion.x = end_x;
+    event.motion.y = y;
+    event.motion.xrel = end_x - start_x;
+    (void)SDL_PushEvent(&event);
+
+    event = (SDL_Event){0};
+    event.type = SDL_MOUSEBUTTONUP;
+    event.button.windowID = window_id;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.state = SDL_RELEASED;
+    event.button.x = end_x;
+    event.button.y = y;
+    (void)SDL_PushEvent(&event);
+}
+
 static int SDLCALL simulator_event_filter(void *userdata, SDL_Event *event)
 {
     simulator_context_t *context = userdata;
@@ -30,6 +69,12 @@ static int SDLCALL simulator_event_filter(void *userdata, SDL_Event *event)
             return 0;
         case SDLK_b:
             SDL_Log("mock BOOT short press: %u", (unsigned)mock_backend_boot_short_press());
+            return 0;
+        case SDLK_RIGHT:
+            push_simulated_swipe(false);
+            return 0;
+        case SDLK_LEFT:
+            push_simulated_swipe(true);
             return 0;
         default:
             return 1;

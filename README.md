@@ -91,7 +91,9 @@ LVGL 9.5 的断言、颜色混合舍入、换行字符与主题选项已在 `sdk
 
 ## 第五阶段：共享 UI 与 Linux 模拟器
 
-共享页面位于 `components/szpi_ui`，当前为 320×240 空白底色、顶部 IMU 三轴 g 值和居中按钮；按钮点击次数作为状态模型更新。`szpi_app` 负责板上 LVGL 任务、触摸输入、IMU 轮询、依据 X 轴加速度自动 180° 旋转和请求桥接，UI 组件不依赖硬件。Linux 模拟器和固件共用 UI 源文件清单，LVGL 固定为 9.5.0，SDL2 使用系统开发包。构建及运行方式和验证边界见[第五阶段记录](docs/develop/phase_5_validation.md)：
+共享页面位于 `components/szpi_ui`，当前使用纯黑背景，顶部状态栏左侧显示 Wi-Fi 状态、中央标题为 `SZ-PI`、右侧显示 NTP 同步后的中国标准时间。主页左划以整页滑动动画打开可纵向滚动的设置菜单；点击菜单项进入位于父菜单右侧的详情页，展示信息行、开关和滑条等本地测试控件，不连接设备服务。详情页右划返回父菜单，设置页右划回主页，页面切换均带滑动动画且不显示返回按钮。`szpi_app` 负责板上 LVGL 任务、SNTP 校时、触摸输入、IMU 轮询、依据 X 轴加速度自动 180° 旋转和请求桥接，UI 组件不依赖硬件。Linux 模拟器和固件共用 UI 源文件清单，LVGL 固定为 9.5.0，SDL2 使用系统开发包。构建及运行方式和验证边界见[第五阶段记录](docs/develop/phase_5_validation.md)：
+
+设置菜单及其详情页顶部左侧显示 `< 上一级标题`（Home、Settings 或 Audio），中间显示当前标题。滑条卡片显示不可拖动的占比预览；点击后进入禁用划页手势的独立调节页，使用大滑条调整演示值，并通过 Back 按钮返回。
 
 ```sh
 cmake -S simulator -B simulator/build
@@ -99,4 +101,4 @@ cmake --build simulator/build
 ./simulator/build/szpi_ui_sim
 ```
 
-Fedora 安装 SDL2 开发包：`sudo dnf install SDL2-devel pkgconf-pkg-config`。模拟器窗口固定为 320×240、1:1 显示且不可调整大小；鼠标点击按钮，B 模拟 BOOT 短按，Esc 退出。UI 使用英文和 Noto Sans，字体以仅含 ASCII 字符的 C 源码嵌入固件与模拟器；生成方式与许可证记录在[第五阶段验证记录](docs/develop/phase_5_validation.md)。
+Fedora 安装 SDL2 开发包：`sudo dnf install SDL2-devel pkgconf-pkg-config`。模拟器窗口固定为 320×240、1:1 显示且不可调整大小；鼠标拖动可模拟触摸划页，键盘右方向键进入设置、左方向键返回，B 模拟 BOOT 短按，Esc 退出。UI 使用英文和 Noto Sans，字体以仅含 ASCII 字符的 C 源码嵌入固件与模拟器；生成方式与许可证记录在[第五阶段验证记录](docs/develop/phase_5_validation.md)。模拟器使用主机本地时间；固件使用 SNTP 校时。
