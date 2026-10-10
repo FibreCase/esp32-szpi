@@ -24,7 +24,7 @@
 | ota_0 | app / ota_0 | 0x20000 | 8128KiB |
 | ota_1 | app / ota_1 | 0x810000 | 8128KiB |
 
-`ota_1` 结束于 `0x1000000`（16MiB 边界），没有尾部预留空间。没有 factory 分区，OTA 元数据为空时启动 `ota_0`。这里只配置 OTA 所需布局，后续仍需实现固件下载、校验及切换逻辑。
+`ota_1` 结束于 `0x1000000`（16MiB 边界），没有尾部预留空间。没有 factory 分区，OTA 元数据为空时启动 `ota_0`。OTA 更新已通过 About 页面手动触发，使用 `esp_https_ota` 写入另一个 OTA 槽并在首启后执行 UI 健康确认；配置和限制见 [OTA 设计](docs/develop/ota_design.md)。
 
 ## 硬件接线速查
 
@@ -93,7 +93,7 @@ LVGL 9.5 的断言、颜色混合舍入、换行字符与主题选项已在 `sdk
 
 ## 第五阶段：共享 UI 与 Linux 模拟器
 
-共享页面位于 `components/szpi_ui`，当前使用纯黑背景，顶部状态栏左侧显示 Wi-Fi 状态、中央标题为 `SZ-PI`、右侧显示 NTP 同步后的中国标准时间。主页左划以整页滑动动画打开可纵向滚动的设置菜单；点击菜单项进入位于父菜单右侧的详情页。Audio 的音量 / 增益滑条和 Audio Test 页面绑定音频服务；Storage 页面展示 SD 卡状态、容量、可用空间、文件系统与 SDMMC 速度，并提供重试挂载和二次确认的 FAT32 格式化按钮。其他演示控件不连接设备服务。详情页右划返回父菜单，设置页右划回主页，页面切换均带滑动动画且不显示返回按钮。`szpi_app` 负责板上 LVGL 任务、SNTP 校时、触摸输入、IMU 轮询、依据 X 轴加速度自动 180° 旋转和请求桥接，UI 组件不依赖硬件。Linux 模拟器和固件共用 UI 源文件清单，LVGL 固定为 9.5.0，SDL2 使用系统开发包。构建及运行方式和验证边界见[第五阶段记录](docs/develop/phase_5_validation.md)：
+共享页面位于 `components/szpi_ui`，当前使用纯黑背景，顶部状态栏左侧显示 Wi-Fi 状态、中央标题为 `SZ-PI`、右侧显示 NTP 同步后的中国标准时间。主页左划以整页滑动动画打开可纵向滚动的设置菜单；菜单顺序为 Network、Display、Camera、Audio、Storage、About；点击菜单项进入位于父菜单右侧的详情页。Camera 页面展示 GC2145、320 x 240 和 RGB565 静态规格，点击 Test 进入实时预览测试页，显示刷新 FPS、错误数及错误码；右划返回时停止采集。模拟器显示 Camera unavailable，不访问主机摄像头。Audio 的音量 / 增益滑条和 Audio Test 页面绑定音频服务；Storage 页面展示 SD 卡状态、容量、可用空间、文件系统与 SDMMC 速度，并提供重试挂载和二次确认的 FAT32 格式化按钮。其他演示控件不连接设备服务。详情页右划返回父菜单，设置页右划回主页，页面切换均带滑动动画且不显示返回按钮。`szpi_app` 负责板上 LVGL 任务、SNTP 校时、触摸输入、IMU 轮询、依据 X 轴加速度自动 180° 旋转和请求桥接，UI 组件不依赖硬件。Linux 模拟器和固件共用 UI 源文件清单，LVGL 固定为 9.5.0，SDL2 使用系统开发包。构建及运行方式和验证边界见[第五阶段记录](docs/develop/phase_5_validation.md)：
 
 设置菜单及其详情页顶部左侧显示 `< 上一级标题`（Home、Settings 或 Audio），中间显示当前标题。滑条卡片显示不可拖动的占比预览；点击后进入禁用划页手势的独立调节页，使用大滑条调整数值，并通过 Back 按钮返回。Audio 滑条绑定设备服务并持久化，其他演示控件不绑定服务。
 
@@ -111,6 +111,6 @@ LVGL 的 128KiB 静态对象内存池放在 PSRAM；两块 40 行像素 DMA 缓�
 
 PSRAM UI 缓存配置：指令缓存 32KiB、数据缓存 64KiB、数据缓存行 64B。40 行双 DMA 的板上整屏条纹测试约 41.5 FPS；完整记录见显示性能测试文档。
 
-Display 菜单亮度已绑定实际背光，范围 10–100%，点击卡片进入独立滑条页，松手保存到 NVS，重启恢复（默认 50%）。Orientation 显示实际自动旋转朝向；分辨率与 Dark 主题为实际只读信息，FPS / Tearing 继续使用真实显示统计。模拟器仅模拟亮度状态。
+Display 菜单亮度已绑定实际背光，范围 10–100%，点击卡片进入独立滑条页，松手保存到 NVS，重启恢复（默认 50%）。Orientation 显示实际自动旋转朝向；分辨率与 Dark 主题为实际只读信息，FPS / Tearing 继续使用真实显示统计。About 显示设备、平台和当前固件版本，版本号读取 ESP-IDF app description；模拟器显示自身版本。About 的 `Install update` 使用 `CONFIG_SZPI_OTA_URL` 下载完整固件镜像，默认 `http://localhost/ota/firmware.bin`；板上须配置设备可访问的服务器地址。模拟器不执行 OTA。
 
 首次 Wi-Fi 配网已接入 Settings → Network：当前网络详情（IP、网关、子网、设备 / AP MAC、RSSI 和信道）/ 双步清除、Connect a New Network、DPP 与 WPA2 热点二维码、gzip 单 HTML Captive Portal。STA 的 DHCP 与 mDNS hostname 共用 NVS 设置，默认 `szpi`，最多 32 个字符，可用 `szpi.local` 访问；应用可通过 `szpi_app_wifi_set_hostname()` 更新。启动读取 NVS，无配置时等待用户选择方式；只有进入对应二维码页面才启动 DPP 或热点，两者互斥，右划退出停止配网，无 Cancel 按钮。新网络获得 DHCP 并保存成功后才替换旧配置；失败、取消或超时保留旧配置。热点默认 10 分钟，成功提示 5 秒后关闭。固件 / simulator 构建与主机测试不代表手机兼容性验收；范围与 NVS 加密限制见 [配网设计](docs/develop/wifi_provisioning.md)，测试和板上清单见 [配网验证](docs/develop/wifi_provisioning_validation.md)。

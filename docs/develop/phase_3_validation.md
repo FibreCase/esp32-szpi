@@ -34,3 +34,7 @@
 ## 尚未上板
 
 用户反馈显示本身正常、camera 预览颜色异常；已在 staging 拷贝中增加 RGB565 每像素字节交换，重新构建通过。没有烧录或访问设备，修正效果尚未实物确认；若颜色仍不对，下一步检查 RGB/BGR 元素顺序及 DVP 数据线位序。以下结果均未测：探测 PID=0x2145、100 帧有效采集、画面方向、Start / Stop 和页面切换 10 次、Wi-Fi 连接变化时的预览、FPS 与最大延迟、堆和 DMA 连续块、任务栈余量、30 分钟运行及停止后掉电 / 重启。
+
+## 当前 Camera 测试入口（2026-10-10）
+
+第五阶段共享 UI 的 Settings → Camera → Test 已重新接入 runtime preview 服务，替代历史 Start / Stop / Back 界面：进入测试页启动，右划返回停止；完整生命周期、主机测试与当前验证边界见[第五阶段记录](phase_5_validation.md)。保留 RGB565 字节交换、水平镜像、单帧 PSRAM 和 staging 所有权规则；IDF 6.1 / simulator 构建与页面主机测试通过，未烧录，上述 camera 实物验收状态不变。

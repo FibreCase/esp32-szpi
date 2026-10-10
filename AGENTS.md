@@ -16,6 +16,7 @@
 - 第四阶段任务与当前实现见 `docs/develop/task_phase_4.md`、`docs/develop/phase_4_validation.md`：已加入 `szpi_audio` / `szpi_storage` 初版、Audio/SD UI、低幅测试音、5 秒 PSRAM 麦克风录音后回放、Audio Test 页面、NVS 音量设置（扬声器默认 50%、麦克风默认 100%）、PCM WAV `.part` 录制 / 最近文件回放及二次确认 FAT32 格式化入口；IDF 6.1 构建与 WAV 解析 host 测试通过。其他逻辑 / 故障测试和上板验证仍待完成，当前 WAV 写入未使用计划中的 16 块 PSRAM 队列，TX/RX 时钟兼容与同时录放未验收。audio 借用 board 新 I²C 并统一管理 I²S0；storage 管理 SDMMC / FATFS 生命周期。挂载失败不自动格式化，开发阶段不格式化实卡。
 
 - 第五阶段共享 UI 与 Linux 模拟器见 `docs/develop/task_phase_5.md`、`docs/develop/phase_5_validation.md`：页面属于 `szpi_ui`，应用状态转换与操作桥接属于 `szpi_app`；共享页面不得依赖 ESP-IDF 或硬件组件。UI 文案使用英文，字体统一采用 Noto Sans，并以 ASCII 子集嵌入共享源码。当前页面为纯黑背景，顶部状态栏依次显示左侧 Wi-Fi 状态、中央标题和右侧 NTP 同步后的中国标准时间；主页标题为 `SZ-PI`，左划进入设置菜单，点击菜单项打开父菜单右侧详情页，右划返回。Audio 音量滑条、Audio Test 操作和 Storage 状态 / 格式化按钮绑定应用服务；其他演示控件仅供 UI 测试。Storage 格式化需二次确认及当前卡 generation 校验。普通菜单页使用滑动动画且不显示返回按钮；滑条卡片提供只读占比预览，点击进入禁用划页手势的独立调节页，通过 Back 按钮返回。应用仍依据 X 轴重力符号进行有滞回的 180° 自动旋转，并同步 LCD 和触摸坐标。模拟器用锁定的 LVGL 9.5.0 与 SDL2。板上与模拟器构建状态分别记录，不将桌面运行视作板上验收。
+- OTA 设计与实现见 `docs/develop/ota_design.md`：About 页面手动发起，`CONFIG_SZPI_OTA_URL` 默认 `http://localhost/ota/firmware.bin`；runtime 独立任务通过 `esp_https_ota` 写入非运行槽，完成首启 UI 健康确认后提交镜像，失败则回滚。`localhost` 指设备自身，板上须配置可达 URL。IDF 6.1 固件构建通过，板上 OTA / 回滚待验收。
 
 ## 结构与边界
 
@@ -61,7 +62,7 @@
 - 外部依赖在所属 idf_component.yml 声明已验证版本；保留生成的 dependencies.lock，升级依赖单独验证，不手改 lock。
 - 固定接线在 board，可调参数按需用 CONFIG_SZPI_* / Kconfig，运行设置放 NVS。sdkconfig.defaults 为持久配置，sdkconfig 为生成文件且被忽略；改 defaults 后同步生效配置并验证。
 - partitions.csv 为双 OTA、无 factory，两槽等大，各 8128KiB，占满应用可用 Flash；不擅自添加 Flash 文件系统。大文件放 SD，小配置放 NVS，禁止自动擦除配置作为通用恢复手段。
-- OTA 使用官方 API 查找非运行分区，不硬编码偏移；开启回滚必须同时实现启动健康确认。
+- OTA 使用官方 `esp_https_ota` API 及 OTA 分区表选择非运行分区，不硬编码偏移；启用回滚时同时实现启动健康确认。
 - 代码 / 配置 / 依赖改动运行 idf.py build；分区改动核对生成表容量与对齐。纯文档变更检查内容与链接即可，不运行无关构建。
 - 测试优先覆盖状态、失败清理、缓冲所有权、影子寄存器及队列边界；避免为机械常量写镜像测试。编译通过不等于上板通过。
 - 修改接线、资源、默认参数、结构或公共契约时同步相关文档与 README。烧录、擦除和设备操作遵循用户当前授权范围。

@@ -4,7 +4,7 @@
 
 本方案针对嘉立创实战派 ESP32-S3、ESP-IDF 6.1，硬件接线及初始参数以 [hardware_io.md](hardware_io.md) 为准。产品功能尚未具体定义，因此先建立显示、输入、摄像头、音频和存储能力的边界，业务功能按实际需求添加。
 
-**第一阶段已实现正式启动、board、runtime 和 Wi-Fi，并记录单次正常联网启动；完整验收尚未完成。第二阶段已实现 ST7789 / FT6336 适配、LVGL 单屏 UI 与 runtime 启停，并通过构建；逻辑测试及板上方向、颜色和触摸校准仍待完成。第二阶段附加输入已实现 QMI8658A、BOOT 与验证页，并通过主机逻辑测试和 IDF 6.1 构建，仍待上板验证。第三阶段已落下 GC2145 适配和 LVGL 预览代码，依赖及 IDF 6.1 增量 / 干净 defaults 构建通过，逻辑测试和板上验收仍待完成。第四阶段已有 audio / storage 初版及 Audio/SD 页，IDF 6.1 构建通过；实时分块录音、恢复逻辑、TX/RX 并行及实物校准仍待验证。** 任务与验证记录分别见 [第二阶段任务](develop/task_phase_2.md)、[第二阶段验证](develop/phase_2_validation.md)、[第二阶段附加任务](develop/task_phase_2_extra.md)、[第二阶段附加验证](develop/phase_2_extra_validation.md)、[第三阶段任务](develop/task_phase_3.md)、[第三阶段验证](develop/phase_3_validation.md)、[第四阶段任务](develop/task_phase_4.md) 和 [第四阶段验证](develop/phase_4_validation.md)。下文列出的后续功能继续按需求逐步落地，不预先添加空组件、虚假成功的 API 或占位任务。
+**第一阶段已实现正式启动、board、runtime 和 Wi-Fi，并记录单次正常联网启动；完整验收尚未完成。第二阶段已实现 ST7789 / FT6336 适配、LVGL 单屏 UI 与 runtime 启停，并通过构建；逻辑测试及板上方向、颜色和触摸校准仍待完成。第二阶段附加输入已实现 QMI8658A、BOOT 与验证页，并通过主机逻辑测试和 IDF 6.1 构建，仍待上板验证。第三阶段已落下 GC2145 适配和 LVGL 预览代码，依赖及 IDF 6.1 增量 / 干净 defaults 构建通过，逻辑测试和板上验收仍待完成。第四阶段已有 audio / storage 初版及 Audio/SD 页，IDF 6.1 构建通过；实时分块录音、恢复逻辑、TX/RX 并行及实物校准仍待验证。OTA 已加入 About 页面手动更新、双槽升级和首启 UI 健康确认；尚未上板验证。** 任务与验证记录分别见 [第二阶段任务](develop/task_phase_2.md)、[第二阶段验证](develop/phase_2_validation.md)、[第二阶段附加任务](develop/task_phase_2_extra.md)、[第二阶段附加验证](develop/phase_2_extra_validation.md)、[第三阶段任务](develop/task_phase_3.md)、[第三阶段验证](develop/phase_3_validation.md)、[第四阶段任务](develop/task_phase_4.md)、[第四阶段验证](develop/phase_4_validation.md) 和 [OTA 设计](develop/ota_design.md)。下文列出的后续功能继续按需求逐步落地，不预先添加空组件、虚假成功的 API 或占位任务。
 
 ## 分层与依赖
 
@@ -206,7 +206,7 @@ Task Watchdog 由任务在约定的有效进展点自行维护，或用适当的
 - 运行稳定后减少帧循环中的申请 / 释放，复用固定缓冲。初期 QVGA RGB565 单帧预算 153600 字节，单屏同尺寸；不能未经评估就同时复制多份。
 - NVS 保存版本化的小配置，图片 / WAV / 大资源放 SD。当前 Flash 没有文件系统分区，不擅自加入 SPIFFS / LittleFS，也不缩小已确定的两个等大 OTA 槽。
 - NVS 初始化异常不可直接擦除全分区；区分版本迁移、数据损坏与空间不足，制定具体恢复方案。文件写失败应保留已有文件，异常中断的录音按可恢复格式处理。
-- OTA 写入使用官方 API 与非运行分区；配置双槽不等于已实现升级。启用回滚前同时实现首次启动健康确认，未完成健康确认流程不宣称支持可靠回滚。
+- OTA 使用 `esp_https_ota` 和 OTA 分区表选择非运行槽；只有新镜像完整校验并完成写入后才切换启动槽。启用 bootloader 回滚，并在试运行启动后等待 UI 首帧就绪才确认固件；其他核心启动失败会拒绝试运行镜像。
 
 ## 构建、配置与编码风格
 
@@ -254,3 +254,5 @@ Wi-Fi 配网归属：szpi_app 的唯一 Wi-Fi task 管理 NVS / 状态机、候�
 IDF 默认事件任务 sys_evt 栈为 4096B，DPP callback 的大事件与 queue 消息使用串行回调独占的固定暂存区，不在事件栈上叠加；队列按值复制。运行诊断增加 sys_evt_stack（最小剩余字节），所有 IDF high-water 数值按字节直接使用。板上曾出现点击配网 sys_evt 溢出，修复与复测状态见配网验证记录。
 
 Wi-Fi 配网按页面生命周期启动：Network / 方式选择页不启动服务，DPP QR 页仅运行 STA + DPP，热点 QR 页仅运行 AP+STA / DHCP / DNS / HTTP。页面退出请求带独立 ID，runtime Wi-Fi owner 串行停止旧会话，避免快速导航遗留配网或旧请求停止新会话。
+
+Camera → Test 共享页通过 START / STOP 事件请求 preview 服务，szpi_app 的唯一 UI 任务在回调外执行请求、复制 / 镜像 RGB565 到其 PSRAM staging 并提供图像描述给 szpi_ui。共享 UI 只借用图像源，所有修改、解绑、DMA 等待和释放由 UI owner 管理；普通退出保留 staging，UI 停止后释放。页面仅接收相机状态、刷新 FPS 和错误模型，桌面不启动相机。

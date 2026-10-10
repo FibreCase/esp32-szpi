@@ -1,6 +1,9 @@
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
+#include "esp_app_desc.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -45,6 +48,16 @@ static uint8_t s_requested_brightness = UI_BRIGHTNESS_PERCENT;
 static uint8_t s_saved_brightness = UI_BRIGHTNESS_PERCENT;
 static bool s_brightness_pending;
 static bool s_brightness_save_pending;
+static bool s_camera_requested;
+static bool s_camera_command_pending;
+static esp_err_t s_camera_command_error;
+static uint8_t *s_camera_staging;
+static lv_image_dsc_t s_camera_image_source;
+static uint32_t s_camera_display_frames;
+static int64_t s_camera_period_started;
+static uint32_t s_camera_period_frames;
+static szpi_preview_ack_message_t s_camera_pending_ack;
+static bool s_camera_ack_pending;
 
 static void load_brightness(void)
 {
@@ -98,10 +111,21 @@ static void set_ui_state(szpi_ui_state_t state, esp_err_t error)
 static void primary_action_cb(szpi_ui_event_t event, uint32_t value, void *context)
 {
     (void)context;
+    if (event == SZPI_UI_EVENT_CAMERA_TEST_START || event == SZPI_UI_EVENT_CAMERA_TEST_STOP) {
+        s_camera_requested = event == SZPI_UI_EVENT_CAMERA_TEST_START;
+        s_camera_command_pending = true;
+        s_camera_command_error = ESP_OK;
+        return;
+    }
     if (event == SZPI_UI_EVENT_NETWORK_BEGIN || event == SZPI_UI_EVENT_NETWORK_CANCEL || event == SZPI_UI_EVENT_NETWORK_FORGET) {
         esp_err_t err = event == SZPI_UI_EVENT_NETWORK_BEGIN ? szpi_app_wifi_provision_begin((value & 1U) != 0, value >> 1) :
             (event == SZPI_UI_EVENT_NETWORK_CANCEL ? szpi_app_wifi_provision_cancel(value) : szpi_app_wifi_forget(value));
         if (err != ESP_OK) ESP_LOGW(TAG, "network command rejected: %s", esp_err_to_name(err));
+        return;
+    }
+    if (event == SZPI_UI_EVENT_OTA_START) {
+        esp_err_t err = szpi_app_ota_start();
+        if (err != ESP_OK) ESP_LOGW(TAG, "OTA request rejected: %s", esp_err_to_name(err));
         return;
     }
     if (event == SZPI_UI_EVENT_BRIGHTNESS_CHANGED || event == SZPI_UI_EVENT_BRIGHTNESS_SAVE) {
@@ -274,10 +298,109 @@ static void poll_imu(void)
     }
 }
 
+/* Camera frames never become LVGL sources: only the UI-owned staging does. */
+static void process_camera_frame(void)
+{
+    if (s_camera_ack_pending) {
+        if (xQueueSend(szpi_preview_ack_queue, &s_camera_pending_ack, 0) != pdTRUE) return;
+        s_camera_ack_pending = false;
+    }
+    szpi_preview_frame_message_t message;
+    if (xQueueReceive(szpi_preview_frame_queue, &message, 0) != pdTRUE) return;
+    bool displayed = false;
+    uint32_t copy_us = 0;
+    uint32_t refresh_us = 0;
+    if (s_camera_requested && s_camera_staging != NULL &&
+        message.frame.width == SZPI_CAMERA_WIDTH && message.frame.height == SZPI_CAMERA_HEIGHT &&
+        message.frame.length == SZPI_CAMERA_FRAME_BYTES && message.frame.data != NULL) {
+        esp_err_t err = szpi_display_wait_flush(pdMS_TO_TICKS(FLUSH_WAIT_SLICE_MS));
+        if (err == ESP_OK) {
+            int64_t started = esp_timer_get_time();
+            for (size_t y = 0; y < SZPI_CAMERA_HEIGHT; ++y) {
+                for (size_t x = 0; x < SZPI_CAMERA_WIDTH; ++x) {
+                    size_t source = (y * SZPI_CAMERA_WIDTH + SZPI_CAMERA_WIDTH - 1 - x) * 2;
+                    size_t target = (y * SZPI_CAMERA_WIDTH + x) * 2;
+                    s_camera_staging[target] = message.frame.data[source + 1];
+                    s_camera_staging[target + 1] = message.frame.data[source];
+                }
+            }
+            copy_us = (uint32_t)(esp_timer_get_time() - started);
+            if (szpi_ui_camera_test_set_frame(&s_camera_image_source) == SZPI_UI_RESULT_OK) {
+                started = esp_timer_get_time();
+                lv_refr_now(s_lv_display);
+                err = szpi_display_wait_flush(pdMS_TO_TICKS(FLUSH_WAIT_SLICE_MS));
+                refresh_us = (uint32_t)(esp_timer_get_time() - started);
+                displayed = err == ESP_OK;
+            }
+        }
+        if (err != ESP_OK) s_camera_command_error = err;
+    }
+    /* Send only after all source reads; never discard the matching ack. */
+    szpi_preview_ack_message_t ack = {.token = message.frame.token, .generation = message.generation};
+    if (xQueueSend(szpi_preview_ack_queue, &ack, 0) != pdTRUE) {
+        s_camera_pending_ack = ack;
+        s_camera_ack_pending = true;
+        s_camera_command_error = ESP_ERR_INVALID_STATE;
+        ESP_LOGE(TAG, "camera acknowledgement queue full");
+        (void)szpi_app_camera_preview_request_stop();
+    }
+    if (displayed) {
+        s_camera_display_frames++;
+        s_camera_period_frames++;
+    }
+    int64_t now = esp_timer_get_time();
+    if (xSemaphoreTake(szpi_preview_status_lock, 0) == pdTRUE) {
+        szpi_preview_status.displayed_frames = s_camera_display_frames;
+        if (!displayed) szpi_preview_status.dropped_frames++;
+        if (copy_us > szpi_preview_status.max_copy_us) szpi_preview_status.max_copy_us = copy_us;
+        if (refresh_us > szpi_preview_status.max_refresh_us) szpi_preview_status.max_refresh_us = refresh_us;
+        if (now - s_camera_period_started >= 1000000) {
+            szpi_preview_status.display_fps_milli = (uint32_t)(s_camera_period_frames * 1000000000ULL /
+                (uint64_t)(now - s_camera_period_started));
+            s_camera_period_started = now;
+            s_camera_period_frames = 0;
+        }
+        xSemaphoreGive(szpi_preview_status_lock);
+    }
+}
+
+static void process_camera_command(void)
+{
+    if (!s_camera_command_pending) return;
+    if (!s_camera_requested) {
+        s_camera_command_pending = false;
+        s_camera_command_error = szpi_app_camera_preview_request_stop();
+        return;
+    }
+    /* A re-entry waits for the previous session to finish, without blocking UI. */
+    if ((xEventGroupGetBits(szpi_system_events) & SZPI_EVENT_PREVIEW_STOPPED) == 0) return;
+    s_camera_command_pending = false;
+    if (s_camera_staging == NULL) {
+        s_camera_staging = heap_caps_malloc(SZPI_CAMERA_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (s_camera_staging == NULL) {
+            s_camera_command_error = ESP_ERR_NO_MEM;
+            return;
+        }
+        s_camera_image_source = (lv_image_dsc_t){
+            .header = {.magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565,
+                       .w = SZPI_CAMERA_WIDTH, .h = SZPI_CAMERA_HEIGHT, .stride = SZPI_CAMERA_WIDTH * 2},
+            .data_size = SZPI_CAMERA_FRAME_BYTES, .data = s_camera_staging,
+        };
+    }
+    s_camera_display_frames = s_camera_period_frames = 0;
+    s_camera_period_started = esp_timer_get_time();
+    s_camera_command_error = szpi_app_camera_preview_start();
+    if (s_camera_command_error != ESP_OK) {
+        ESP_LOGW(TAG, "camera start rejected: %s", esp_err_to_name(s_camera_command_error));
+    }
+}
+
 static void update_ui_model(void)
 {
     apply_brightness_request();
     poll_imu();
+    process_camera_command();
+    process_camera_frame();
     EventBits_t app_events = xEventGroupGetBits(szpi_system_events);
     bool time_valid = (app_events & SZPI_EVENT_TIME_SYNCED) != 0;
     char time_text[6] = "--:--";
@@ -303,6 +426,10 @@ static void update_ui_model(void)
         .network_connected = (app_events & SZPI_EVENT_NETWORK_READY) != 0,
         .time_valid = time_valid,
     };
+    const esp_app_desc_t *app_description = esp_app_get_description();
+    if (app_description != NULL) {
+        snprintf(model.firmware_version, sizeof(model.firmware_version), "%s", app_description->version);
+    }
     if (szpi_audio_status_lock != NULL && xSemaphoreTake(szpi_audio_status_lock, 0) == pdTRUE) {
         szpi_audio_service_status_t audio = szpi_audio_status;
         xSemaphoreGive(szpi_audio_status_lock);
@@ -376,7 +503,31 @@ static void update_ui_model(void)
         memcpy(model.setup_wifi_qr, wifi.provisioning.wifi_qr, sizeof(model.setup_wifi_qr));
         memcpy(model.setup_dpp_uri, wifi.provisioning.dpp_uri, sizeof(model.setup_dpp_uri));
     }
+    szpi_ota_status_t ota = {0};
+    if (szpi_app_ota_get_status(&ota) == ESP_OK) {
+        model.ota_state = (szpi_ui_ota_state_t)ota.state;
+        model.ota_progress_percent = ota.progress_percent;
+        model.ota_error_code = (uint32_t)ota.last_error;
+    }
     memcpy(model.time_text, time_text, sizeof(model.time_text));
+    if (xSemaphoreTake(szpi_preview_status_lock, 0) == pdTRUE) {
+        switch (szpi_preview_status.state) {
+            case SZPI_CAMERA_PREVIEW_STOPPED: model.camera_state = SZPI_UI_CAMERA_STOPPED; break;
+            case SZPI_CAMERA_PREVIEW_STARTING: model.camera_state = SZPI_UI_CAMERA_STARTING; break;
+            case SZPI_CAMERA_PREVIEW_RUNNING: model.camera_state = SZPI_UI_CAMERA_RUNNING; break;
+            case SZPI_CAMERA_PREVIEW_STOPPING: model.camera_state = SZPI_UI_CAMERA_STOPPING; break;
+            case SZPI_CAMERA_PREVIEW_FAULT: model.camera_state = SZPI_UI_CAMERA_FAULT; break;
+            default: model.camera_state = SZPI_UI_CAMERA_UNAVAILABLE; break;
+        }
+        model.camera_fps_milli = szpi_preview_status.display_fps_milli;
+        model.camera_error_count = szpi_preview_status.error_count;
+        model.camera_error_code = (uint32_t)szpi_preview_status.last_error;
+        xSemaphoreGive(szpi_preview_status_lock);
+    }
+    if (s_camera_command_error != ESP_OK) {
+        model.camera_state = SZPI_UI_CAMERA_FAULT;
+        model.camera_error_code = (uint32_t)s_camera_command_error;
+    }
     szpi_display_test_stats_t stats = {0};
     model.display_test_supported = true;
     if (szpi_display_get_test_stats(&stats) == ESP_OK) {
@@ -470,6 +621,22 @@ static esp_err_t initialize_ui(void)
 
 static bool cleanup_ui(void)
 {
+    s_camera_requested = false;
+    s_camera_command_pending = false;
+    if (szpi_preview_task_handle != NULL) {
+        (void)szpi_app_camera_preview_request_stop();
+        TickType_t started = xTaskGetTickCount();
+        while ((xEventGroupGetBits(szpi_system_events) & SZPI_EVENT_PREVIEW_STOPPED) == 0) {
+            process_camera_frame();
+            if (xTaskGetTickCount() - started >= pdMS_TO_TICKS(5500)) {
+                ESP_LOGE(TAG, "camera stop timed out; preview service retains camera resources");
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        process_camera_frame();
+    }
+    (void)szpi_ui_camera_test_set_frame(NULL);
     while (s_lv_display != NULL &&
         szpi_display_wait_flush(pdMS_TO_TICKS(FLUSH_WAIT_SLICE_MS)) == ESP_ERR_TIMEOUT) {
         ESP_LOGW(TAG, "waiting for LCD DMA before releasing display resources");
@@ -489,6 +656,11 @@ static bool cleanup_ui(void)
         s_lv_input = NULL;
     }
     if (s_lvgl_initialized) szpi_ui_destroy();
+    heap_caps_free(s_camera_staging);
+    s_camera_staging = NULL;
+    s_camera_image_source = (lv_image_dsc_t){0};
+    s_camera_requested = s_camera_command_pending = false;
+    s_camera_command_error = ESP_OK;
     esp_err_t err = szpi_display_set_brightness(0);
     if (err != ESP_OK && err != ESP_ERR_INVALID_ARG) {
         ESP_LOGW(TAG, "backlight off failed: %s", esp_err_to_name(err));

@@ -12,4 +12,17 @@ config SZPI_WIFI_PROVISION_TIMEOUT_S
     default 600
     depends on SZPI_WIFI_ENABLED
 
+config SZPI_OTA_ENABLED
+    bool "Enable firmware OTA updates"
+    default y
+    help
+        Enable manual firmware updates from the configured URL.
+
+config SZPI_OTA_URL
+    string "Firmware image URL"
+    default "http://localhost/ota/firmware.bin"
+    depends on SZPI_OTA_ENABLED
+    help
+        URL of a complete ESP-IDF application image for this target.
+
 endmenu

@@ -2,6 +2,10 @@
 
 #include <time.h>
 
+#ifndef SZPI_UI_SIM_VERSION
+#define SZPI_UI_SIM_VERSION "Simulator"
+#endif
+
 static szpi_ui_model_t s_model;
 static uint32_t s_boot_short_presses;
 
@@ -9,9 +13,11 @@ void mock_backend_init(void)
 {
     s_model = (szpi_ui_model_t){
         .display_brightness_percent = 50,
+        .firmware_version = SZPI_UI_SIM_VERSION,
         .speaker_volume_percent = 50,
         .microphone_gain_percent = 100,
         .audio_state = SZPI_UI_AUDIO_IDLE,
+        .camera_state = SZPI_UI_CAMERA_UNAVAILABLE,
         .storage_state = SZPI_UI_STORAGE_READY,
         .storage_capacity_bytes = 32ULL * 1024ULL * 1024ULL * 1024ULL,
         .storage_free_bytes = 24ULL * 1024ULL * 1024ULL * 1024ULL,
@@ -54,6 +60,10 @@ void mock_backend_handle_event(szpi_ui_event_t event, uint32_t value, void *cont
         s_model.audio_rms_sample = 0;
     }
     if (event == SZPI_UI_EVENT_AUDIO_STOP) s_model.audio_state = SZPI_UI_AUDIO_IDLE;
+    if (event == SZPI_UI_EVENT_OTA_START) {
+        s_model.ota_state = SZPI_UI_OTA_FAILED;
+        s_model.ota_error_code = 0x106U;
+    }
     if (event == SZPI_UI_EVENT_STORAGE_RETRY) s_model.storage_state = SZPI_UI_STORAGE_READY;
     if (event == SZPI_UI_EVENT_STORAGE_FORMAT && value == s_model.storage_generation) {
         s_model.storage_state = SZPI_UI_STORAGE_READY;

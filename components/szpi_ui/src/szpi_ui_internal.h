@@ -4,8 +4,9 @@
 #include "szpi_ui.h"
 
 typedef enum {
-    SZPI_UI_MENU_DISPLAY = 0,
-    SZPI_UI_MENU_NETWORK,
+    SZPI_UI_MENU_NETWORK = 0,
+    SZPI_UI_MENU_DISPLAY,
+    SZPI_UI_MENU_CAMERA,
     SZPI_UI_MENU_AUDIO,
     SZPI_UI_MENU_STORAGE,
     SZPI_UI_MENU_ABOUT,
@@ -32,6 +33,10 @@ void szpi_ui_emit(szpi_ui_event_t event, uint32_t value);
 bool szpi_ui_display_test_create(lv_obj_t *panel, lv_obj_t *parent_screen);
 void szpi_ui_display_test_update(const szpi_ui_model_t *model);
 void szpi_ui_display_test_destroy(void);
+
+bool szpi_ui_camera_test_create(lv_obj_t *panel, lv_obj_t *parent_screen);
+void szpi_ui_camera_test_update(const szpi_ui_model_t *model);
+void szpi_ui_camera_test_destroy(void);
 
 bool szpi_ui_network_create(lv_obj_t *panel, lv_obj_t *parent_screen);
 bool szpi_ui_network_update(const szpi_ui_model_t *model);

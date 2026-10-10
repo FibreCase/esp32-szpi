@@ -219,6 +219,10 @@ void szpi_camera_preview_service_task(void *context)
     for (;;) {
         uint32_t command = 0;
         (void)xTaskNotifyWait(0, UINT32_MAX, &command, portMAX_DELAY);
+        if ((command & PREVIEW_CMD_STOP) != 0) {
+            xEventGroupSetBits(szpi_system_events, SZPI_EVENT_PREVIEW_STOPPED);
+            continue;
+        }
         if ((command & PREVIEW_CMD_START) == 0) continue;
         s_stop_latched = false;
         run_preview();

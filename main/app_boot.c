@@ -60,6 +60,15 @@ static esp_err_t validate_psram(void)
 
 static void latch_boot_fault(esp_err_t cause)
 {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (running != NULL && esp_ota_get_state_partition(running, &state) == ESP_OK &&
+        state == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_LOGE(TAG, "rejecting unhealthy OTA trial image");
+        esp_err_t rollback_err = esp_ota_mark_app_invalid_rollback_and_reboot();
+        if (rollback_err == ESP_OK) esp_restart();
+        ESP_LOGE(TAG, "OTA rollback request failed: %s", esp_err_to_name(rollback_err));
+    }
     ESP_LOGE(TAG, "core startup failed: %s", esp_err_to_name(cause));
     esp_err_t diagnostic_err = szpi_app_runtime_fault(cause);
     if (diagnostic_err != ESP_OK) ESP_LOGE(TAG, "diagnostic runtime unavailable: %s", esp_err_to_name(diagnostic_err));
@@ -94,7 +103,17 @@ void app_boot_start(void)
     err = szpi_app_runtime_start(CONFIG_SZPI_WIFI_ENABLED, true);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "runtime creation failed: %s", esp_err_to_name(err));
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        esp_ota_img_states_t state;
+        if (running != NULL && esp_ota_get_state_partition(running, &state) == ESP_OK &&
+            state == ESP_OTA_IMG_PENDING_VERIFY) {
+            esp_err_t rollback_err = esp_ota_mark_app_invalid_rollback_and_reboot();
+            if (rollback_err == ESP_OK) esp_restart();
+            ESP_LOGE(TAG, "OTA rollback request failed: %s", esp_err_to_name(rollback_err));
+        }
         (void)szpi_board_deinit();
         return;
     }
+    err = szpi_app_confirm_boot_health(pdMS_TO_TICKS(30000));
+    if (err != ESP_OK) ESP_LOGE(TAG, "application health confirmation failed: %s", esp_err_to_name(err));
 }

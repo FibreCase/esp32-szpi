@@ -113,6 +113,21 @@ typedef struct {
     char last_file[40];
 } szpi_audio_service_status_t;
 
+typedef enum {
+    SZPI_OTA_IDLE,
+    SZPI_OTA_REQUESTED,
+    SZPI_OTA_CONNECTING,
+    SZPI_OTA_DOWNLOADING,
+    SZPI_OTA_RESTARTING,
+    SZPI_OTA_FAILED,
+} szpi_ota_state_t;
+
+typedef struct {
+    szpi_ota_state_t state;
+    uint8_t progress_percent;
+    esp_err_t last_error;
+} szpi_ota_status_t;
+
 // Call once after NVS and board initialization. Creates all enabled project tasks.
 esp_err_t szpi_app_runtime_start(bool wifi_enabled, bool ui_enabled);
 // Starts only diagnostics after a core boot failure; never publishes SYSTEM_READY.
@@ -132,6 +147,9 @@ esp_err_t szpi_app_ui_start(void);
 esp_err_t szpi_app_ui_stop(TickType_t timeout_ticks);
 esp_err_t szpi_app_ui_get_status(szpi_ui_status_t *status);
 esp_err_t szpi_app_camera_preview_start(void);
+// Non-blocking cooperative STOP, including cancellation of an unconsumed START.
+// Does not release frames or staging; the UI owner must keep draining frames
+// and wait for PREVIEW_STOPPED before starting a new session.
 esp_err_t szpi_app_camera_preview_request_stop(void);
 esp_err_t szpi_app_camera_preview_stop(TickType_t timeout_ticks);
 esp_err_t szpi_app_camera_preview_get_status(szpi_camera_preview_status_t *status);
@@ -150,6 +168,12 @@ esp_err_t szpi_app_audio_set_input_gain_percent(uint8_t gain_percent);
 esp_err_t szpi_app_audio_save_settings(void);
 esp_err_t szpi_app_audio_stop(void);
 esp_err_t szpi_app_audio_get_status(szpi_audio_service_status_t *status);
+// OTA runs on its dedicated runtime task and requires an active Wi-Fi connection.
+esp_err_t szpi_app_ota_start(void);
+esp_err_t szpi_app_ota_get_status(szpi_ota_status_t *status);
+// During an OTA trial boot, waits for the initial UI/display to become ready
+// before confirming the new image; timeout rejects the image and rolls back.
+esp_err_t szpi_app_confirm_boot_health(TickType_t timeout_ticks);
 EventGroupHandle_t szpi_app_get_system_events(void);
 
 /* Nonblocking local GUI commands; candidate testing and NVS mutation run only

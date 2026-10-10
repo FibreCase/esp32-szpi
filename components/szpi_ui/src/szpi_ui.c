@@ -27,6 +27,10 @@ static szpi_ui_event_cb_t s_event_cb;
 static void *s_event_context;
 static szpi_ui_page_t s_audio_test_page;
 static lv_obj_t *s_audio_test_status_label;
+static lv_obj_t *s_about_version_value;
+static lv_obj_t *s_about_ota_status;
+static lv_obj_t *s_about_ota_button;
+static lv_obj_t *s_about_ota_button_label;
 
 void szpi_ui_emit(szpi_ui_event_t event, uint32_t value)
 {
@@ -107,8 +111,9 @@ bool szpi_ui_page_create(szpi_ui_page_t *page, const char *title, bool show_stat
 static bool create_settings_menu(void)
 {
     static const char *const menu_items[SZPI_UI_MENU_COUNT] = {
-        "Display",
         "Network",
+        "Display",
+        "Camera",
         "Audio",
         "Storage",
         "About",
@@ -297,6 +302,38 @@ static void audio_test_button_event(lv_event_t *event)
     szpi_ui_emit((szpi_ui_event_t)encoded_event, 0);
 }
 
+static void ota_button_event(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
+    lv_indev_t *indev = lv_indev_active();
+    if (indev != NULL && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) return;
+    szpi_ui_emit(SZPI_UI_EVENT_OTA_START, 0);
+}
+
+static bool create_about_ota_controls(lv_obj_t *panel)
+{
+    s_about_ota_status = lv_label_create(panel);
+    s_about_ota_button = lv_button_create(panel);
+    if (s_about_ota_status == NULL || s_about_ota_button == NULL) return false;
+
+    lv_label_set_text(s_about_ota_status, "Ready to update");
+    lv_obj_set_style_text_color(s_about_ota_status, lv_color_hex(0x8B95A5), 0);
+    lv_obj_set_width(s_about_ota_status, 280);
+    lv_label_set_long_mode(s_about_ota_status, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_pos(s_about_ota_status, 12, 196);
+
+    szpi_ui_style_card(s_about_ota_button);
+    lv_obj_set_size(s_about_ota_button, lv_pct(100), 40);
+    lv_obj_set_pos(s_about_ota_button, 0, 244);
+    lv_obj_add_event_cb(s_about_ota_button, ota_button_event, LV_EVENT_CLICKED, NULL);
+    s_about_ota_button_label = lv_label_create(s_about_ota_button);
+    if (s_about_ota_button_label == NULL) return false;
+    lv_label_set_text(s_about_ota_button_label, "Install update");
+    lv_obj_set_style_text_color(s_about_ota_button_label, lv_color_hex(0xE7EAF0), 0);
+    lv_obj_center(s_about_ota_button_label);
+    return true;
+}
+
 static void audio_test_open_event(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED) return;
@@ -406,6 +443,11 @@ static bool create_detail_page(size_t index, const char *title)
                    szpi_ui_display_test_create(panel, page->screen);
         case SZPI_UI_MENU_NETWORK:
             return szpi_ui_network_create(panel, page->screen);
+        case SZPI_UI_MENU_CAMERA:
+            return create_display_row(panel, 0, "Sensor", "GC2145") &&
+                   create_display_row(panel, 64, "Resolution", "320 x 240") &&
+                   create_display_row(panel, 128, "Format", "RGB565") &&
+                   szpi_ui_camera_test_create(panel, page->screen);
         case SZPI_UI_MENU_AUDIO:
             return create_slider_row(panel, 0, "Speaker level", 50, 0) &&
                    create_slider_row(panel, 88, "Microphone gain", 100, 1) &&
@@ -413,9 +455,15 @@ static bool create_detail_page(size_t index, const char *title)
         case SZPI_UI_MENU_STORAGE:
             return szpi_ui_storage_create(panel);
         case SZPI_UI_MENU_ABOUT:
-            return create_display_row(panel, 0, "Device", "SZ-PI") &&
-                   create_display_row(panel, 64, "Interface", "Test menu") &&
-                   create_display_row(panel, 128, "Version", "Prototype");
+            if (!create_display_row(panel, 0, "Device", "SZ-PI") ||
+                !create_display_row(panel, 64, "Platform", "ESP32-S3")) return false;
+            s_about_version_value = create_display_row(panel, 128, "Version", "--");
+            if (s_about_version_value == NULL) return false;
+            lv_obj_set_width(s_about_version_value, 172);
+            lv_label_set_long_mode(s_about_version_value, LV_LABEL_LONG_MODE_DOTS);
+            lv_obj_set_style_text_align(s_about_version_value, LV_TEXT_ALIGN_RIGHT, 0);
+            lv_obj_align(s_about_version_value, LV_ALIGN_RIGHT_MID, -12, 0);
+            return create_about_ota_controls(panel);
         default:
             return false;
     }
@@ -504,6 +552,10 @@ szpi_ui_result_t szpi_ui_create(szpi_ui_event_cb_t event_cb, void *context)
     s_settings_page = (szpi_ui_page_t){0};
     memset(s_detail_pages, 0, sizeof(s_detail_pages));
     s_orientation_value = NULL;
+    s_about_version_value = NULL;
+    s_about_ota_status = NULL;
+    s_about_ota_button = NULL;
+    s_about_ota_button_label = NULL;
     s_settings_menu_panel = NULL;
     s_settings_active = false;
     s_active_detail = -1;
@@ -515,7 +567,7 @@ szpi_ui_result_t szpi_ui_create(szpi_ui_event_cb_t event_cb, void *context)
         return SZPI_UI_RESULT_NO_MEMORY;
     }
     static const char *const detail_titles[SZPI_UI_MENU_COUNT] = {
-        "Display", "Network", "Audio", "Storage", "About",
+        "Network", "Display", "Camera", "Audio", "Storage", "About",
     };
     for (size_t i = 0; i < SZPI_UI_MENU_COUNT; ++i) {
         if (!create_detail_page(i, detail_titles[i])) {
@@ -541,6 +593,44 @@ szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model)
     time_text[sizeof(time_text) - 1] = '\0';
 
     update_page_status(&s_home_page, model, time_text);
+    if (s_about_version_value != NULL) {
+        const char *version = model->firmware_version[0] != '\0' ? model->firmware_version : "Unavailable";
+        if (strcmp(lv_label_get_text(s_about_version_value), version) != 0) {
+            lv_label_set_text(s_about_version_value, version);
+        }
+    }
+    if (s_about_ota_status != NULL && s_about_ota_button != NULL && s_about_ota_button_label != NULL) {
+        const char *status_text = "Ready to update";
+        const char *button_text = "Install update";
+        bool busy = false;
+        switch (model->ota_state) {
+            case SZPI_UI_OTA_REQUESTED: status_text = "Update queued"; button_text = "Updating..."; busy = true; break;
+            case SZPI_UI_OTA_CONNECTING: status_text = "Connecting to update server"; button_text = "Updating..."; busy = true; break;
+            case SZPI_UI_OTA_DOWNLOADING:
+                lv_label_set_text_fmt(s_about_ota_status, "Downloading %u%%", model->ota_progress_percent);
+                status_text = NULL;
+                button_text = "Updating...";
+                busy = true;
+                break;
+            case SZPI_UI_OTA_RESTARTING: status_text = "Update complete; restarting"; button_text = "Restarting..."; busy = true; break;
+            case SZPI_UI_OTA_FAILED:
+                lv_label_set_text_fmt(s_about_ota_status, "Update failed (%08lX)", (unsigned long)model->ota_error_code);
+                status_text = NULL;
+                button_text = "Retry update";
+                break;
+            case SZPI_UI_OTA_IDLE:
+            default: break;
+        }
+        if (!model->network_connected && !busy) {
+            status_text = "Connect to Wi-Fi to update";
+        }
+        if (status_text != NULL) lv_label_set_text(s_about_ota_status, status_text);
+        if (strcmp(lv_label_get_text(s_about_ota_button_label), button_text) != 0) {
+            lv_label_set_text(s_about_ota_button_label, button_text);
+        }
+        if (busy || !model->network_connected) lv_obj_add_state(s_about_ota_button, LV_STATE_DISABLED);
+        else lv_obj_remove_state(s_about_ota_button, LV_STATE_DISABLED);
+    }
     bool open_network_setup = szpi_ui_network_update(model);
     if (open_network_setup && lv_screen_active() == s_home_page.screen) {
         s_active_detail = SZPI_UI_MENU_NETWORK;
@@ -573,6 +663,7 @@ szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model)
         (model->display_inverted ? "180 deg" : "0 deg");
     if (strcmp(lv_label_get_text(s_orientation_value), orientation) != 0) lv_label_set_text(s_orientation_value, orientation);
     szpi_ui_display_test_update(model);
+    szpi_ui_camera_test_update(model);
     szpi_ui_storage_update(model);
     update_audio_test(model);
     return SZPI_UI_RESULT_OK;
@@ -583,6 +674,7 @@ void szpi_ui_destroy(void)
     if (s_home_page.screen != NULL) lv_screen_load(s_home_page.screen);
     szpi_ui_network_destroy();
     szpi_ui_display_test_destroy();
+    szpi_ui_camera_test_destroy();
     szpi_ui_storage_destroy();
     if (s_audio_test_page.screen != NULL) lv_obj_delete(s_audio_test_page.screen);
     s_audio_test_page = (szpi_ui_page_t){0};
@@ -602,6 +694,10 @@ void szpi_ui_destroy(void)
     s_settings_page = (szpi_ui_page_t){0};
     memset(s_detail_pages, 0, sizeof(s_detail_pages));
     s_orientation_value = NULL;
+    s_about_version_value = NULL;
+    s_about_ota_status = NULL;
+    s_about_ota_button = NULL;
+    s_about_ota_button_label = NULL;
     s_settings_menu_panel = NULL;
     s_settings_active = false;
     s_active_detail = -1;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(szpi_ui_sim C)
+project(szpi_ui_sim VERSION 0.1.0 LANGUAGES C)
 
 include(FetchContent)
 find_package(PkgConfig REQUIRED)
@@ -25,3 +25,4 @@ target_include_directories(szpi_ui_sim PRIVATE
 )
 target_link_libraries(szpi_ui_sim PRIVATE lvgl PkgConfig::SDL2)
 target_compile_features(szpi_ui_sim PRIVATE c_std_11)
+target_compile_definitions(szpi_ui_sim PRIVATE SZPI_UI_SIM_VERSION="${PROJECT_VERSION}")

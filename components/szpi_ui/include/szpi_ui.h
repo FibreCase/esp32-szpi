@@ -22,9 +22,21 @@ typedef enum {
     SZPI_UI_EVENT_AUDIO_TEST_TONE,
     SZPI_UI_EVENT_AUDIO_TEST_CAPTURE,
     SZPI_UI_EVENT_AUDIO_STOP,
+    SZPI_UI_EVENT_OTA_START,
     SZPI_UI_EVENT_STORAGE_RETRY,
     SZPI_UI_EVENT_STORAGE_FORMAT,
+    SZPI_UI_EVENT_CAMERA_TEST_START,
+    SZPI_UI_EVENT_CAMERA_TEST_STOP,
 } szpi_ui_event_t;
+
+typedef enum {
+    SZPI_UI_CAMERA_UNAVAILABLE,
+    SZPI_UI_CAMERA_STOPPED,
+    SZPI_UI_CAMERA_STARTING,
+    SZPI_UI_CAMERA_RUNNING,
+    SZPI_UI_CAMERA_STOPPING,
+    SZPI_UI_CAMERA_FAULT,
+} szpi_ui_camera_state_t;
 
 typedef enum {
     SZPI_UI_AUDIO_OFFLINE,
@@ -47,6 +59,15 @@ typedef enum {
     SZPI_UI_STORAGE_FORMATTING,
     SZPI_UI_STORAGE_FAULT,
 } szpi_ui_storage_state_t;
+
+typedef enum {
+    SZPI_UI_OTA_IDLE,
+    SZPI_UI_OTA_REQUESTED,
+    SZPI_UI_OTA_CONNECTING,
+    SZPI_UI_OTA_DOWNLOADING,
+    SZPI_UI_OTA_RESTARTING,
+    SZPI_UI_OTA_FAILED,
+} szpi_ui_ota_state_t;
 
 typedef enum {
     SZPI_UI_RESULT_OK = 0,
@@ -103,11 +124,19 @@ typedef struct {
     bool display_inverted;
     bool display_test_supported;
     bool display_test_valid;
+    char firmware_version[32];
     uint32_t display_fps_x10;
     uint32_t display_frame_avg_us;
     uint32_t display_frame_max_us;
     uint32_t display_lvgl_avg_us;
     uint32_t display_gap_avg_us;
+    szpi_ui_ota_state_t ota_state;
+    uint8_t ota_progress_percent;
+    uint32_t ota_error_code;
+    szpi_ui_camera_state_t camera_state;
+    uint32_t camera_fps_milli;
+    uint32_t camera_error_count;
+    uint32_t camera_error_code;
 } szpi_ui_model_t;
 
 typedef void (*szpi_ui_event_cb_t)(szpi_ui_event_t event, uint32_t value, void *context);
@@ -127,5 +156,10 @@ typedef void (*szpi_ui_event_cb_t)(szpi_ui_event_t event, uint32_t value, void *
 szpi_ui_result_t szpi_ui_create(szpi_ui_event_cb_t event_cb, void *context);
 szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model);
 void szpi_ui_destroy(void);
+
+/* UI-thread only. Source is a 320x240 native-endian RGB565 staging buffer.
+ * The caller owns source and pixels, keeps both valid while bound, and waits
+ * for rendering / DMA before modifying them. NULL unbinds the image. */
+szpi_ui_result_t szpi_ui_camera_test_set_frame(const lv_image_dsc_t *source);
 
 #endif
