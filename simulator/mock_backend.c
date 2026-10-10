@@ -14,6 +14,7 @@ void mock_backend_init(void)
     s_model = (szpi_ui_model_t){
         .display_brightness_percent = 50,
         .firmware_version = SZPI_UI_SIM_VERSION,
+        .hostname = "szpi",
         .speaker_volume_percent = 50,
         .microphone_gain_percent = 100,
         .audio_state = SZPI_UI_AUDIO_IDLE,

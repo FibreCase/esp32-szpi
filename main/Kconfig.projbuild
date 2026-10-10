@@ -18,6 +18,31 @@ config SZPI_OTA_ENABLED
     help
         Enable manual firmware updates from the configured URL.
 
+choice SZPI_SNTP_SERVER_MODE
+    prompt "SNTP server source"
+    default SZPI_SNTP_SERVER_CUSTOM
+    help
+        Select a configured NTP server or use the current STA IPv4 gateway.
+
+config SZPI_SNTP_SERVER_CUSTOM
+    bool "Configured server address"
+
+config SZPI_SNTP_SERVER_GATEWAY
+    bool "Use current Wi-Fi gateway"
+    help
+        Use the gateway from the accepted STA DHCP lease as the NTP server.
+        The gateway must provide NTP on UDP port 123. This does not request
+        DHCP option 42 and does not fall back to a public NTP server.
+
+endchoice
+
+config SZPI_SNTP_SERVER_ADDRESS
+    string "SNTP server hostname or IP address"
+    depends on SZPI_SNTP_SERVER_CUSTOM
+    default "pool.ntp.org"
+    help
+        NTP server hostname or IP address, without a URL scheme or port.
+
 config SZPI_OTA_URL
     string "Firmware image URL"
     default "http://localhost/ota/firmware.bin"

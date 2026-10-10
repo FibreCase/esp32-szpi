@@ -44,6 +44,30 @@ Wi-Fi 开发期设置通过 `idf.py menuconfig` 中的 **SZPI application** 项�
 
 [task_phase_2.md](docs/develop/task_phase_2.md) 跟踪 ST7789 显示、FT6336 触摸、LVGL 和单屏验证 UI。UI 任务由 FreeRTOS runtime 统一创建，页面实现颜色 / 方向标记、点击计数、亮度滑条及触摸状态；固件构建和干净默认配置核对通过。坐标映射、刷新边界等逻辑测试及实物显示 / 触摸校准仍待完成，详见 [验证记录](docs/develop/phase_2_validation.md)。
 
+About 页面显示应用当前 hostname（默认为 `szpi`），长名称自动换行；固件通过 Wi-Fi 状态模型读取，模拟器显示示例值。
+
+## 设置页持久化
+
+设置页全部可调参数均通过 NVS 保存，并在设备启动时恢复：
+
+| 设置项 | NVS namespace / key | 保存时机 |
+| --- | --- | --- |
+| Wi-Fi 网络与凭据 | `szpi_wifi / station` | 新网络连接获得 DHCP 且保存成功后提交 |
+| Display 亮度 | `display / brightness` | 松开滑条、Back 或停止 UI |
+| Audio 扬声器音量 | `audio / speaker_pct` | 松开滑条、Back 或停止 UI |
+| Audio 麦克风增益 | `audio / mic_pct` | 松开滑条、Back 或停止 UI |
+
+音频保存由 audio owner 处理；亮度保存由 UI owner 处理。只在值变化时写 Flash，NVS 失败记录日志，不自动擦除配置。模拟器仍只保留内存状态。Screen、Theme、Orientation、Camera 规格及 Storage 状态是只读信息；测试、格式化和 OTA 按钮是操作。SNTP 和 OTA 地址继续使用 sdkconfig。
+
+## SNTP 服务器配置
+
+在 `idf.py menuconfig` → **SZPI application** → **SNTP server source** 中选择：
+
+- **Configured server address**：通过 `CONFIG_SZPI_SNTP_SERVER_ADDRESS` 指定域名或 IP 地址，默认 `pool.ntp.org`；填写地址，不带 `http://` 或端口。
+- **Use current Wi-Fi gateway**：启用 `CONFIG_SZPI_SNTP_SERVER_GATEWAY=y`，自动将当前 STA DHCP 网关作为 NTP 服务器；重新连接或切换网络后更新地址。网关必须提供 UDP 123 的 NTP 服务，此模式不使用 DHCP option 42，也不回退到公共服务器。没有有效网关时不启动 SNTP。
+
+持久默认值保存在 `sdkconfig.defaults`。获得有效 DHCP 后发起校时，沿用 30 秒间隔、最多 3 次额外请求，成功初始化后保留 SNTP 后台轮询；仅校时成功后 UI 才显示中国标准时间。配置和验证说明见 [SNTP 验证记录](docs/develop/sntp_validation.md)。
+
 ## 构建与烧录
 
 在已激活 ESP-IDF 6.1 的终端执行：

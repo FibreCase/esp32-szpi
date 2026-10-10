@@ -256,3 +256,5 @@ IDF 默认事件任务 sys_evt 栈为 4096B，DPP callback 的大事件与 queue
 Wi-Fi 配网按页面生命周期启动：Network / 方式选择页不启动服务，DPP QR 页仅运行 STA + DPP，热点 QR 页仅运行 AP+STA / DHCP / DNS / HTTP。页面退出请求带独立 ID，runtime Wi-Fi owner 串行停止旧会话，避免快速导航遗留配网或旧请求停止新会话。
 
 Camera → Test 共享页通过 START / STOP 事件请求 preview 服务，szpi_app 的唯一 UI 任务在回调外执行请求、复制 / 镜像 RGB565 到其 PSRAM staging 并提供图像描述给 szpi_ui。共享 UI 只借用图像源，所有修改、解绑、DMA 等待和释放由 UI owner 管理；普通退出保留 staging，UI 停止后释放。页面仅接收相机状态、刷新 FPS 和错误模型，桌面不启动相机。
+
+SNTP 由唯一 Wi-Fi owner 在接受 STA DHCP 后请求，`time_sync_service.c` 管理官方 esp_netif SNTP 生命周期和配置地址副本，不创建任务。sdkconfig choice 选择固定域名 / IP 或当前 DHCP 网关；网关变化先 deinit 再 init，地址未变则 restart。Wi-Fi owner 持有最新通过连接校验的 IP 信息，配网成功在无线配网服务收尾后校时，重试预算保持不变；UI 仍只读取同步成功状态。见 [SNTP 验证记录](develop/sntp_validation.md)。

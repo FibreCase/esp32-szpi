@@ -1,4 +1,4 @@
-idf_component_register(SRCS "src/szpi_runtime.c" "src/wifi_service.c" "src/ui_service.c" "src/camera_preview_service.c" "src/storage_service.c" "src/audio_service.c" "src/ota_service.c" "src/szpi_wav.c"
+idf_component_register(SRCS "src/szpi_runtime.c" "src/wifi_service.c" "src/time_sync_service.c" "src/ui_service.c" "src/camera_preview_service.c" "src/storage_service.c" "src/audio_service.c" "src/ota_service.c" "src/szpi_wav.c"
                        INCLUDE_DIRS "include"
                        REQUIRES szpi_wifi szpi_display szpi_input szpi_camera szpi_audio szpi_storage freertos esp_common
                        PRIV_INCLUDE_DIRS "src"

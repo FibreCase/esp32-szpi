@@ -28,6 +28,7 @@ static void *s_event_context;
 static szpi_ui_page_t s_audio_test_page;
 static lv_obj_t *s_audio_test_status_label;
 static lv_obj_t *s_about_version_value;
+static lv_obj_t *s_about_hostname_value;
 static lv_obj_t *s_about_ota_status;
 static lv_obj_t *s_about_ota_button;
 static lv_obj_t *s_about_ota_button_label;
@@ -320,11 +321,11 @@ static bool create_about_ota_controls(lv_obj_t *panel)
     lv_obj_set_style_text_color(s_about_ota_status, lv_color_hex(0x8B95A5), 0);
     lv_obj_set_width(s_about_ota_status, 280);
     lv_label_set_long_mode(s_about_ota_status, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_pos(s_about_ota_status, 12, 196);
+    lv_obj_set_pos(s_about_ota_status, 12, 260);
 
     szpi_ui_style_card(s_about_ota_button);
     lv_obj_set_size(s_about_ota_button, lv_pct(100), 40);
-    lv_obj_set_pos(s_about_ota_button, 0, 244);
+    lv_obj_set_pos(s_about_ota_button, 0, 308);
     lv_obj_add_event_cb(s_about_ota_button, ota_button_event, LV_EVENT_CLICKED, NULL);
     s_about_ota_button_label = lv_label_create(s_about_ota_button);
     if (s_about_ota_button_label == NULL) return false;
@@ -463,6 +464,12 @@ static bool create_detail_page(size_t index, const char *title)
             lv_label_set_long_mode(s_about_version_value, LV_LABEL_LONG_MODE_DOTS);
             lv_obj_set_style_text_align(s_about_version_value, LV_TEXT_ALIGN_RIGHT, 0);
             lv_obj_align(s_about_version_value, LV_ALIGN_RIGHT_MID, -12, 0);
+            s_about_hostname_value = create_display_row(panel, 192, "Hostname", "--");
+            if (s_about_hostname_value == NULL) return false;
+            lv_obj_set_width(s_about_hostname_value, 172);
+            lv_label_set_long_mode(s_about_hostname_value, LV_LABEL_LONG_MODE_WRAP);
+            lv_obj_set_style_text_align(s_about_hostname_value, LV_TEXT_ALIGN_RIGHT, 0);
+            lv_obj_align(s_about_hostname_value, LV_ALIGN_RIGHT_MID, -12, 0);
             return create_about_ota_controls(panel);
         default:
             return false;
@@ -553,6 +560,7 @@ szpi_ui_result_t szpi_ui_create(szpi_ui_event_cb_t event_cb, void *context)
     memset(s_detail_pages, 0, sizeof(s_detail_pages));
     s_orientation_value = NULL;
     s_about_version_value = NULL;
+    s_about_hostname_value = NULL;
     s_about_ota_status = NULL;
     s_about_ota_button = NULL;
     s_about_ota_button_label = NULL;
@@ -593,6 +601,12 @@ szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model)
     time_text[sizeof(time_text) - 1] = '\0';
 
     update_page_status(&s_home_page, model, time_text);
+    if (s_about_hostname_value != NULL) {
+        const char *hostname = model->hostname[0] != '\0' ? model->hostname : "Unavailable";
+        if (strcmp(lv_label_get_text(s_about_hostname_value), hostname) != 0) {
+            lv_label_set_text(s_about_hostname_value, hostname);
+        }
+    }
     if (s_about_version_value != NULL) {
         const char *version = model->firmware_version[0] != '\0' ? model->firmware_version : "Unavailable";
         if (strcmp(lv_label_get_text(s_about_version_value), version) != 0) {
@@ -695,6 +709,7 @@ void szpi_ui_destroy(void)
     memset(s_detail_pages, 0, sizeof(s_detail_pages));
     s_orientation_value = NULL;
     s_about_version_value = NULL;
+    s_about_hostname_value = NULL;
     s_about_ota_status = NULL;
     s_about_ota_button = NULL;
     s_about_ota_button_label = NULL;

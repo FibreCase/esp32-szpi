@@ -125,6 +125,7 @@ typedef struct {
     bool display_test_supported;
     bool display_test_valid;
     char firmware_version[32];
+    char hostname[33];
     uint32_t display_fps_x10;
     uint32_t display_frame_avg_us;
     uint32_t display_frame_max_us;

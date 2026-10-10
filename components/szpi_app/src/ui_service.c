@@ -493,6 +493,8 @@ static void update_ui_model(void)
         model.network_has_config = wifi.has_config;
         model.network_needs_setup = wifi.state == SZPI_WIFI_NO_CONFIG && !wifi.has_config;
         memcpy(model.network_ssid, wifi.ssid, sizeof(model.network_ssid));
+        memcpy(model.hostname, wifi.hostname, sizeof(model.hostname));
+        model.hostname[sizeof(model.hostname) - 1] = '\0';
         model.provisioning_active = wifi.provisioning.active;
         model.provisioning_state = wifi.provisioning.state;
         model.provisioning_generation = wifi.provisioning.generation;
@@ -621,6 +623,16 @@ static esp_err_t initialize_ui(void)
 
 static bool cleanup_ui(void)
 {
+    /* Preserve the latest settings even if STOP arrives before the next UI
+     * iteration or while a slider is still being dragged. */
+    if (s_lvgl_initialized) {
+        s_brightness_save_pending = true;
+        apply_brightness_request();
+        esp_err_t save_err = szpi_app_audio_save_settings();
+        if (save_err != ESP_OK) {
+            ESP_LOGW(TAG, "audio settings save on UI stop rejected: %s", esp_err_to_name(save_err));
+        }
+    }
     s_camera_requested = false;
     s_camera_command_pending = false;
     if (szpi_preview_task_handle != NULL) {

@@ -7,7 +7,7 @@
 #include "nvs.h"
 #include "mdns.h"
 #include "esp_wifi.h"
-#include "esp_netif_sntp.h"
+#include "time_sync_service.h"
 #include "esp_timer.h"
 #include "szpi_app.h"
 #include "szpi_runtime_internal.h"
@@ -17,7 +17,7 @@
 #define MAX_ATTEMPTS 5
 #define SUCCESS_GRACE_US (5000000LL)
 
-static bool s_initialized, s_started, s_sntp_initialized;
+static bool s_initialized, s_started;
 static bool s_mdns_initialized;
 static char s_hostname[SZPI_WIFI_HOSTNAME_MAX + 1] = SZPI_WIFI_HOSTNAME_DEFAULT;
 static bool s_have_config, s_testing, s_disconnect_pending, s_link_seen;
@@ -31,28 +31,12 @@ static esp_err_t s_last_error;
 static int64_t s_time_sync_retry_at;
 static unsigned s_time_sync_retries;
 
-static void time_sync_callback(struct timeval *tv)
-{
-    (void)tv;
-    ESP_LOGI(TAG, "SNTP synchronized; epoch=%lld", tv ? (long long)tv->tv_sec : 0LL);
-    xEventGroupSetBits(szpi_system_events, SZPI_EVENT_TIME_SYNCED);
-}
+static esp_netif_ip_info_t s_time_sync_ip_info;
 
 static void request_time_sync(void)
 {
-    esp_err_t err;
-    if (s_sntp_initialized) {
-        /* A new network must not inherit the previous retry / hourly timer. */
-        err = esp_netif_sntp_start();
-    } else {
-        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-        config.wait_for_sync = false;
-        config.sync_cb = time_sync_callback;
-        err = esp_netif_sntp_init(&config);
-        if (err == ESP_OK) s_sntp_initialized = true;
-    }
-    if (err == ESP_OK) ESP_LOGI(TAG, "SNTP synchronization requested");
-    else ESP_LOGW(TAG, "SNTP unavailable: %s", esp_err_to_name(err));
+    esp_err_t err = szpi_time_sync_request(&s_time_sync_ip_info);
+    if (err != ESP_OK) ESP_LOGW(TAG, "SNTP unavailable: %s", esp_err_to_name(err));
     s_time_sync_retry_at = esp_timer_get_time() + 30000000LL;
 }
 
@@ -400,6 +384,7 @@ static void event_received(const szpi_wifi_event_t *event)
         s_attempts = 0;
         s_last_error = ESP_OK;
         s_state = SZPI_WIFI_ONLINE;
+        s_time_sync_ip_info = event->ip_info;
         publish();
         if (xSemaphoreTake(szpi_wifi_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
             szpi_wifi_status.ip_info = event->ip_info;
@@ -555,7 +540,7 @@ void szpi_wifi_service_task(void *context)
                     ++s_time_sync_retries;
                     ESP_LOGW(TAG, "Waiting for SNTP; retry=%u", s_time_sync_retries);
                     request_time_sync();
-                } else ESP_LOGW(TAG, "SNTP not synchronized; check internet access and UDP 123. Background polling continues.");
+                } else ESP_LOGW(TAG, "SNTP not synchronized; check configured server and UDP 123. Background polling continues after a successful init.");
             }
         }
         if (s_close_at && now >= s_close_at) close_session(true);
