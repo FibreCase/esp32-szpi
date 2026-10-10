@@ -87,6 +87,11 @@ static TaskHandle_t s_wifi_task_handle;
 static TaskHandle_t s_ui_task_handle;
 static TaskHandle_t s_storage_task_handle;
 static TaskHandle_t s_audio_task_handle;
+
+bool szpi_runtime_audio_available(void)
+{
+    return s_audio_task_handle != NULL;
+}
 static TaskHandle_t s_ota_task_handle;
 static bool s_ui_enabled;
 static portMUX_TYPE s_peak_mux = portMUX_INITIALIZER_UNLOCKED;

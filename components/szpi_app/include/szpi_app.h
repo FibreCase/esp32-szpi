@@ -146,6 +146,9 @@ esp_err_t szpi_app_wifi_get_status(szpi_wifi_status_t *status);
 esp_err_t szpi_app_ui_start(void);
 esp_err_t szpi_app_ui_stop(TickType_t timeout_ticks);
 esp_err_t szpi_app_ui_get_status(szpi_ui_status_t *status);
+// Thread-safe latest-value request (10..100). UI owner applies and saves to
+// NVS on its next iteration. Success means accepted, not persisted yet.
+esp_err_t szpi_app_ui_set_brightness(uint8_t percent);
 esp_err_t szpi_app_camera_preview_start(void);
 // Non-blocking cooperative STOP, including cancellation of an unconsumed START.
 // Does not release frames or staging; the UI owner must keep draining frames

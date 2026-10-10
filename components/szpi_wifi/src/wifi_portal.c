@@ -10,12 +10,10 @@
 #include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "wifi_portal.h"
+#include "szpi_http.h"
 #include "provision_protocol.h"
 #include "portal_address.h"
 
-extern const uint8_t portal_gz_start[] asm("_binary_portal_html_gz_start");
-extern const uint8_t portal_gz_end[] asm("_binary_portal_html_gz_end");
-static httpd_handle_t s_http;
 static int s_dns = -1;
 static uint32_t s_generation;
 static char s_token[33];
@@ -98,27 +96,14 @@ static bool authorized(httpd_req_t *req)
 static esp_err_t get_handler(httpd_req_t *req)
 {
     if (!ap_client(req)) return error(req, "403 Forbidden");
-    if (!local_host(req) || (strcmp(req->uri, "/") && strncmp(req->uri, "/api/", 5))) {
-        httpd_resp_set_status(req, "302 Found");
-        httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
-        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-        return httpd_resp_send(req, "Open Wi-Fi setup", HTTPD_RESP_USE_STRLEN);
-    }
-    if (!strcmp(req->uri, "/")) {
-        httpd_resp_set_type(req, "text/html; charset=utf-8");
-        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-        httpd_resp_set_hdr(req, "Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'");
-        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-        return httpd_resp_send(req, (const char *)portal_gz_start, portal_gz_end - portal_gz_start);
-    }
+    if (!local_host(req)) return error(req, "403 Forbidden");
     szpi_provision_status_t status;
     if (!s_status || s_status(&status) != ESP_OK || !status.active || status.generation != s_generation) return error(req, "403 Forbidden");
     cJSON *root = cJSON_CreateObject();
     if (!root) return error(req, "503 Service Unavailable");
-    if (!strcmp(req->uri, "/api/session")) {
+    if (!strcmp(req->uri, "/api/setup/session")) {
         cJSON_AddStringToObject(root, "token", s_token);
-    } else if (!strcmp(req->uri, "/api/status")) {
+    } else if (!strcmp(req->uri, "/api/setup/status")) {
         cJSON_AddNumberToObject(root, "state", status.state);
         cJSON_AddStringToObject(root, "message", status.message);
         cJSON_AddBoolToObject(root, "scanning", status.scanning);
@@ -157,9 +142,9 @@ static esp_err_t post_handler(httpd_req_t *req)
     memset(body, 0, sizeof(body));
     if (!cJSON_IsObject(root)) { cJSON_Delete(root); return error(req, "400 Bad Request"); }
     esp_err_t err = ESP_ERR_INVALID_ARG;
-    if (!strcmp(req->uri, "/api/scan")) {
+    if (!strcmp(req->uri, "/api/setup/scan")) {
         err = s_request(SZPI_PORTAL_SCAN, s_generation, NULL);
-    } else if (!strcmp(req->uri, "/api/connect")) {
+    } else if (!strcmp(req->uri, "/api/setup/connect")) {
         const cJSON *ssid = cJSON_GetObjectItemCaseSensitive(root, "ssid");
         cJSON *password = cJSON_GetObjectItemCaseSensitive(root, "password");
         const cJSON *sae = cJSON_GetObjectItemCaseSensitive(root, "wpa3_only");
@@ -181,7 +166,7 @@ static esp_err_t post_handler(httpd_req_t *req)
 esp_err_t szpi_portal_start(uint32_t generation, szpi_portal_request_cb_t request_cb,
     szpi_portal_status_cb_t status_cb)
 {
-    if (s_http || s_dns >= 0 || !request_cb || !status_cb) return ESP_ERR_INVALID_STATE;
+    if (s_dns >= 0 || !request_cb || !status_cb) return ESP_ERR_INVALID_STATE;
     s_generation = generation;
     s_request = request_cb;
     s_status = status_cb;
@@ -198,21 +183,8 @@ esp_err_t szpi_portal_start(uint32_t generation, szpi_portal_request_cb_t reques
     if (bind(s_dns, (struct sockaddr *)&address, sizeof(address))) goto fail;
     stage = "DNS nonblocking";
     if (fcntl(s_dns, F_SETFL, O_NONBLOCK) < 0) goto fail;
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_open_sockets = 3;
-    config.lru_purge_enable = true;
-    config.stack_size = 6144;
-    config.recv_wait_timeout = 2;
-    config.send_wait_timeout = 2;
-    stage = "HTTP server";
-    err = httpd_start(&s_http, &config);
-    if (err != ESP_OK) goto fail;
-    const httpd_uri_t get = {.uri = "/*", .method = HTTP_GET, .handler = get_handler};
-    const httpd_uri_t post = {.uri = "/*", .method = HTTP_POST, .handler = post_handler};
-    stage = "HTTP handlers";
-    err = httpd_register_uri_handler(s_http, &get);
-    if (err == ESP_OK) err = httpd_register_uri_handler(s_http, &post);
+    stage = "HTTP setup routes";
+    err = szpi_http_set_setup_handlers(get_handler, post_handler);
     if (err != ESP_OK) goto fail;
     return ESP_OK;
 fail:
@@ -223,12 +195,9 @@ fail:
 
 esp_err_t szpi_portal_stop(void)
 {
-    /* httpd_stop joins its dependency task before clearing callback/session data. */
-    if (s_http) {
-        esp_err_t err = httpd_stop(s_http);
-        if (err != ESP_OK) return err;
-        s_http = NULL;
-    }
+    /* Clearing joins any in-flight handler before releasing session state. */
+    esp_err_t err = szpi_http_set_setup_handlers(NULL, NULL);
+    if (err != ESP_OK) return err;
     if (s_dns >= 0) { close(s_dns); s_dns = -1; }
     memset(s_token, 0, sizeof(s_token));
     s_request = NULL;

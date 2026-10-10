@@ -138,3 +138,5 @@ PSRAM UI 缓存配置：指令缓存 32KiB、数据缓存 64KiB、数据缓存�
 Display 菜单亮度已绑定实际背光，范围 10–100%，点击卡片进入独立滑条页，松手保存到 NVS，重启恢复（默认 50%）。Orientation 显示实际自动旋转朝向；分辨率与 Dark 主题为实际只读信息，FPS / Tearing 继续使用真实显示统计。About 显示设备、平台和当前固件版本，版本号读取 ESP-IDF app description；模拟器显示自身版本。About 的 `Install update` 使用 `CONFIG_SZPI_OTA_URL` 下载完整固件镜像，默认 `http://localhost/ota/firmware.bin`；板上须配置设备可访问的服务器地址。模拟器不执行 OTA。
 
 首次 Wi-Fi 配网已接入 Settings → Network：当前网络详情（IP、网关、子网、设备 / AP MAC、RSSI 和信道）/ 双步清除、Connect a New Network、DPP 与 WPA2 热点二维码、gzip 单 HTML Captive Portal。STA 的 DHCP 与 mDNS hostname 共用 NVS 设置，默认 `szpi`，最多 32 个字符，可用 `szpi.local` 访问；应用可通过 `szpi_app_wifi_set_hostname()` 更新。启动读取 NVS，无配置时等待用户选择方式；只有进入对应二维码页面才启动 DPP 或热点，两者互斥，右划退出停止配网，无 Cancel 按钮。新网络获得 DHCP 并保存成功后才替换旧配置；失败、取消或超时保留旧配置。热点默认 10 分钟，成功提示 5 秒后关闭。固件 / simulator 构建与主机测试不代表手机兼容性验收；范围与 NVS 加密限制见 [配网设计](docs/develop/wifi_provisioning.md)，测试和板上清单见 [配网验证](docs/develop/wifi_provisioning_validation.md)。
+
+Web 控制面板提供 Overview 数据看板和 Settings（亮度 / 音量 / 麦克风增益），STA 下通过 `http://szpi.local/` 访问。配网独立在 `/setup`，导航不展示入口。固件构建前须运行 `cd web && npm ci && npm run build`，单 HTML 经 gzip 嵌入固件；接口、生命周期与验证边界见 [Web 控制面板](docs/develop/web_control_panel.md)。

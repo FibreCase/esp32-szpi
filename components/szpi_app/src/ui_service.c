@@ -49,6 +49,24 @@ static uint8_t s_requested_brightness = UI_BRIGHTNESS_PERCENT;
 static uint8_t s_saved_brightness = UI_BRIGHTNESS_PERCENT;
 static bool s_brightness_pending;
 static bool s_brightness_save_pending;
+/* Latest web request, protected by the existing UI status mutex. */
+static bool s_web_brightness_pending;
+static uint8_t s_web_brightness;
+
+esp_err_t szpi_app_ui_set_brightness(uint8_t percent)
+{
+    if (percent < 10 || percent > 100) return ESP_ERR_INVALID_ARG;
+    if (szpi_ui_status_lock == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(szpi_ui_status_lock, pdMS_TO_TICKS(50)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (szpi_ui_status.state != SZPI_UI_READY && szpi_ui_status.state != SZPI_UI_TOUCH_FAULT) {
+        xSemaphoreGive(szpi_ui_status_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_web_brightness = percent;
+    s_web_brightness_pending = true;
+    xSemaphoreGive(szpi_ui_status_lock);
+    return ESP_OK;
+}
 static bool s_camera_requested;
 static bool s_camera_command_pending;
 static esp_err_t s_camera_command_error;
@@ -80,6 +98,14 @@ static void load_brightness(void)
 
 static void apply_brightness_request(void)
 {
+    if (xSemaphoreTake(szpi_ui_status_lock, 0) == pdTRUE) {
+        if (s_web_brightness_pending) {
+            s_requested_brightness = s_web_brightness;
+            s_brightness_pending = s_brightness_save_pending = true;
+            s_web_brightness_pending = false;
+        }
+        xSemaphoreGive(szpi_ui_status_lock);
+    }
     if (s_brightness_pending) {
         s_brightness_pending = false;
         esp_err_t err = szpi_display_set_brightness(s_requested_brightness);
@@ -550,6 +576,10 @@ static void update_ui_model(void)
         xSemaphoreGive(szpi_ui_status_lock);
     }
     (void)szpi_ui_update(&model);
+    if (xSemaphoreTake(szpi_ui_status_lock, 0) == pdTRUE) {
+        szpi_ui_status.brightness_percent = s_brightness;
+        xSemaphoreGive(szpi_ui_status_lock);
+    }
 }
 
 static esp_err_t initialize_ui(void)
@@ -573,6 +603,7 @@ static esp_err_t initialize_ui(void)
     s_orientation_error = ESP_OK;
     if (szpi_ui_status_lock != NULL && xSemaphoreTake(szpi_ui_status_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
         szpi_ui_status.click_count = 0;
+        s_web_brightness_pending = false;
         szpi_ui_status.brightness_percent = UI_BRIGHTNESS_PERCENT;
         szpi_ui_status.touch_x = 0;
         szpi_ui_status.touch_y = 0;

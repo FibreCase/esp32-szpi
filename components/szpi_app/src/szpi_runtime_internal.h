@@ -68,6 +68,8 @@ void szpi_storage_service_task(void *context);
 void szpi_audio_service_task(void *context);
 void szpi_ota_service_task(void *context);
 void szpi_wifi_service_task(void *context);
+esp_err_t szpi_web_service_start(void);
+bool szpi_runtime_audio_available(void);
 void szpi_ui_service_task(void *context);
 void szpi_supervisor_task(void *context);
 void szpi_wifi_post_event(const szpi_wifi_event_t *event, void *context);

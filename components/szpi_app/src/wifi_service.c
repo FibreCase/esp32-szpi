@@ -159,6 +159,10 @@ static esp_err_t ensure_driver(void)
         err = szpi_wifi_start();
         if (err == ESP_OK) s_started = true;
     }
+    if (err == ESP_OK) {
+        esp_err_t web_err = szpi_web_service_start();
+        if (web_err != ESP_OK) ESP_LOGW(TAG, "HTTP control panel unavailable: %s", esp_err_to_name(web_err));
+    }
     return err;
 }
 

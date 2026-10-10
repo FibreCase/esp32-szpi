@@ -249,7 +249,7 @@ Task Watchdog 由任务在约定的有效进展点自行维护，或用适当的
 
 Display 亮度设置（10–100%，旧 NVS 低值恢复时夹到 10%）：szpi_ui 发出带百分比的 changed/save 请求，szpi_app 唯一 UI 任务在回调外应用 szpi_display 背光接口并管理 NVS display/brightness，成功应用的值写入 UI 模型；松手/返回时仅保存变化值。共享页面不访问 NVS 或 LEDC，模拟器后端仅保留内存状态。
 
-Wi-Fi 配网归属：szpi_app 的唯一 Wi-Fi task 管理 NVS / 状态机、候选连接与提交；szpi_wifi 拥有 STA/AP、DPP、HTTP/DNS 与版本化凭据，HTTP 库任务为依赖例外，DNS 在 owner 上轮询。共享 Network 页面仅使用模型和操作事件。详细契约、超时、内存增加依据和安全边界见 [配网设计](develop/wifi_provisioning.md)。
+Wi-Fi 配网归属：szpi_app 的唯一 Wi-Fi task 管理 NVS / 状态机、候选连接与提交；szpi_wifi 拥有 STA/AP、DPP、DNS、配网 HTTP 处理与版本化凭据；共享端口 80 的 HTTP transport 由 szpi_http 拥有，控制面板及设置桥接属于 szpi_app/web_service，HTTP 库任务为依赖例外，DNS 在 owner 上轮询。共享 Network 页面仅使用模型和操作事件。详细契约、超时、内存增加依据和安全边界见 [配网设计](develop/wifi_provisioning.md)。
 
 IDF 默认事件任务 sys_evt 栈为 4096B，DPP callback 的大事件与 queue 消息使用串行回调独占的固定暂存区，不在事件栈上叠加；队列按值复制。运行诊断增加 sys_evt_stack（最小剩余字节），所有 IDF high-water 数值按字节直接使用。板上曾出现点击配网 sys_evt 溢出，修复与复测状态见配网验证记录。
 
@@ -258,3 +258,5 @@ Wi-Fi 配网按页面生命周期启动：Network / 方式选择页不启动服�
 Camera → Test 共享页通过 START / STOP 事件请求 preview 服务，szpi_app 的唯一 UI 任务在回调外执行请求、复制 / 镜像 RGB565 到其 PSRAM staging 并提供图像描述给 szpi_ui。共享 UI 只借用图像源，所有修改、解绑、DMA 等待和释放由 UI owner 管理；普通退出保留 staging，UI 停止后释放。页面仅接收相机状态、刷新 FPS 和错误模型，桌面不启动相机。
 
 SNTP 由唯一 Wi-Fi owner 在接受 STA DHCP 后请求，`time_sync_service.c` 管理官方 esp_netif SNTP 生命周期和配置地址副本，不创建任务。sdkconfig choice 选择固定域名 / IP 或当前 DHCP 网关；网关变化先 deinit 再 init，地址未变则 restart。Wi-Fi owner 持有最新通过连接校验的 IP 信息，配网成功在无线配网服务收尾后校时，重试预算保持不变；UI 仍只读取同步成功状态。见 [SNTP 验证记录](develop/sntp_validation.md)。
+
+Web 控制面板与配网共用单个端口 80 服务及 gzip HTML，控制面板导航仅 Overview / Settings。HTTP 依赖任务栈 6144 字节、最多 3 个客户端；配网回调通过静态 mutex 等待在途调用完成后注销。详细接口、前端构建前置步骤与验证边界见 [Web 控制面板](develop/web_control_panel.md)。
