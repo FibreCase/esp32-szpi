@@ -4,6 +4,7 @@ import setupHtml from '../../components/szpi_wifi/assets/portal.html?raw';
 const app=document.getElementById('app');
 const settingPage=location.pathname==='/settings';
 let token='',timer,editing=false,saving=false,lastSettings={};
+const hostnameValid=value=>/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,30}[A-Za-z0-9])?$/.test(value);
 const $=id=>document.getElementById(id);
 const text=(id,value)=>{if($(id))$(id).textContent=value};
 const memory=bytes=>bytes==null?'—':(bytes/1048576).toFixed(1);
@@ -24,7 +25,8 @@ function dashboard(){return `<div class="grid">
   <article class="card wide"><h2>Device</h2><div class="rows"><div class="row"><span>Hostname</span><span id="hostname">—</span></div><div class="row"><span>Firmware</span><span id="version">—</span></div><div class="row"><span>Running slot</span><code id="slot">—</code></div></div></article>
   <article class="card"><h2>Storage</h2><div class="metric section" id="storage">—</div><div class="detail" id="storage-size">Waiting for device</div></article></div>`}
 function settings(){return `<form id="settings-form" class="card settings">
-  <h2>Display & audio</h2><p class="muted">Changes are saved on your device.</p>
+  <h2>Device settings</h2><p class="muted">Changes are saved on your device.</p>
+  <div class="setting"><label for="hostname-setting">Hostname</label><input id="hostname-setting" type="text" maxlength="32" autocomplete="off" spellcheck="false" disabled><div class="hint">1–32 letters, digits or hyphens. Takes effect after restart.</div><div class="hint" id="hostname-state"></div></div>
   ${[['brightness','Display brightness',10],['speaker','Speaker volume',0],['microphone','Microphone gain',0]].map(([id,title,min])=>`<div class="setting"><div class="setting-title"><label for="${id}">${title}</label><output id="${id}-value">—</output></div><input id="${id}" type="range" min="${min}" max="100" value="${min}" disabled><div class="hint">${min}–100%</div></div>`).join('')}
   <div class="settings-footer"><button class="save" id="save" disabled>Save changes</button><span class="hint" id="save-state">Waiting for device</span></div></form>`}
 function render(){
@@ -32,17 +34,22 @@ function render(){
   <main><div class="intro"><div><div class="eyebrow">Device control panel</div><h1>${settingPage?'Settings':'Overview'}</h1><p class="muted">${settingPage?'Keep your display and audio just right.':'A live view of your SZ-PI.'}</p></div><span id="connection" class="badge">Connecting</span></div>${settingPage?settings():dashboard()}<footer><span id="notice" class="notice" role="status" aria-live="polite"></span><span id="updated">Waiting for first update</span></footer></main>`;
   if(settingPage){
     for(const id of ['brightness','speaker','microphone'])$(id).addEventListener('input',()=>{editing=true;text(id+'-value',$(id).value+'%');text('save-state','Unsaved changes')});
+    $('hostname-setting').addEventListener('input',()=>{editing=true;text('save-state','Unsaved changes')});
     $('settings-form').addEventListener('submit',saveSettings);
   }
 }
 async function saveSettings(event){
-  event.preventDefault();if(saving)return;saving=true;$('save').disabled=true;
+  event.preventDefault();if(saving)return;
+  const hostname=$('hostname-setting').value;
+  if(lastSettings.hostname!=null&&!hostnameValid(hostname)){notice('Use 1–32 letters, digits or hyphens, with no leading or trailing hyphen.',true);return}
+  saving=true;$('save').disabled=true;$('hostname-setting').disabled=true;
   for(const id of ['brightness','speaker','microphone'])$(id).disabled=true;
   try{
     for(const id of ['brightness','speaker','microphone']){
       const value=Number($(id).value);
       if(lastSettings[id]!=null&&value!==lastSettings[id])await api('/api/settings',{key:id,value});
     }
+    if(lastSettings.hostname!=null&&hostname!==lastSettings.hostname)await api('/api/settings',{key:'hostname',value:hostname});
     editing=false;notice('Changes submitted. The device will apply and save them.');text('save-state','Submitted');
   }catch(error){notice(error.message,true);text('save-state','Please retry')}
   finally{saving=false;await refresh()}
@@ -64,7 +71,10 @@ async function refresh(){
         $(id).disabled=!available;
         if(!editing&&s.settings[id]!=null){$(id).value=s.settings[id];text(id+'-value',s.settings[id]+'%')}
       }
-      $('save').disabled=!token||!(s.settings.display_available||s.settings.audio_available);
+      $('hostname-setting').disabled=s.settings.hostname==null;
+      if(!editing&&s.settings.hostname!=null)$('hostname-setting').value=s.settings.hostname;
+      text('hostname-state',s.settings.hostname!=null&&s.settings.hostname!==s.hostname?'Restart required. Currently using '+s.hostname+'.':'');
+      $('save').disabled=!token||!(s.settings.display_available||s.settings.audio_available||s.settings.hostname!=null);
       if(!editing)text('save-state','Settings up to date');
     }
     text('updated','Updated '+new Date().toLocaleTimeString());

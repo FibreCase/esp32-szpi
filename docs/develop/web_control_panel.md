@@ -3,7 +3,7 @@
 固件在 Wi-Fi 驱动启动后提供端口 80 的 HTTP 服务。STA 联网后访问 `http://szpi.local/`（或设备 IPv4 地址）；hostname 以 NVS 实际值为准。当前只有 Overview 与 Settings 两个导航项，使用英文文案。
 
 - `/`：运行时间、内部 RAM / PSRAM 可用量、网络、固件版本与运行 OTA 槽、相机预览状态 / FPS、SD 状态与容量。每 3 秒读取实际服务快照，不查询硬件驱动。
-- `/settings`：亮度 10–100%、扬声器音量 0–100%、麦克风增益 0–100%。通过既有应用服务应用并保存 NVS；不可用服务禁用对应控件。亮度由 UI owner 执行，HTTP 不调用 LVGL。响应 202 表示请求已接受，尚不代表硬件应用或 NVS 写入完成；写入故障由既有服务日志报告。
+- `/settings`：hostname（保存后重启生效）、亮度 10–100%、扬声器音量 0–100%、麦克风增益 0–100%。通过既有应用服务应用并保存 NVS；不可用服务禁用对应控件。亮度由 UI owner 执行，HTTP 不调用 LVGL。响应 202 表示请求已接受，尚不代表硬件应用或 NVS 写入完成；写入故障由既有服务日志报告。
 - `/setup`：独立配网页面，控制面板没有入口。仅进入设备 Network 的热点二维码页面才激活其会话/API；退出或超时停用。AP 根地址及 captive 探测地址跳转到 `/setup`。扫描选择行为保持原有规则。
 
 ## 构建
@@ -28,7 +28,7 @@ Vite 与 vite-plugin-singlefile 把 JS/CSS（包括独立配网页面）合并�
 
 - `GET /api/device`：状态快照，无密码。
 - `GET /api/control-session`：本次启动的随机控制令牌。
-- `POST /api/settings`：`application/json`，`{"key":"brightness","value":50}`；key 可为 brightness / speaker / microphone。请求带 `X-Control-Token`，限制 127 字节，拒绝无效范围 / 非整数 / 额外字段。
+- `POST /api/settings`：`application/json`，`{"key":"brightness","value":50}`；key 可为 brightness / speaker / microphone，另支持 `{"key":"hostname","value":"szpi-next"}`。hostname 使用既有 1–32 字符 DNS 标签校验，保存成功才接受请求，仅写 NVS，不调用运行时 hostname 更新；下次启动读取并应用 DHCP / mDNS。`settings.hostname` 为保存值，顶层 `hostname` 为当前运行值，两者不同显示重启提示。请求带 `X-Control-Token`，限制 127 字节，拒绝无效范围 / 非整数 / 额外字段。
 - 原配网接口统一为 `/api/setup/session`、`status`、`scan`、`connect`，保留 AP 本地地址、会话令牌和 origin 校验；STA 不允许配网 API。
 
 只接受设备 IPv4 / hostname.local 的 Host；设置写入核对令牌与 Origin，不开放 CORS。控制令牌用于同源请求校验，不是账号登录；当前服务面向可信局域网，无 HTTPS 或账号系统。
@@ -37,6 +37,6 @@ HTTP 使用 ESP-IDF 内部依赖任务，栈 6144 字节，最多 3 个客户端
 
 ## 验证
 
-前端单文件构建通过（约 16.7kB，gzip 6.24kB）。桌面使用明确的示例状态检查两页导航、滑条编辑与保存失败反馈，以及 `/setup` 初始未选择网络、表单隐藏；不代表板上数据与持久化验收。
+前端单文件构建通过（约 17.9kB，gzip 6.59kB）。桌面使用明确的示例状态检查两页导航、滑条编辑与保存失败反馈，以及 `/setup` 初始未选择网络、表单隐藏；另以示例的当前 / 保存 hostname 不同验证重启提示，并验证非法 hostname 在前端拒绝提交；不代表板上数据与持久化验收。
 
 ESP-IDF 6.1 / esp32s3 固件构建通过。板上仍需验证 STA 的 IP / mDNS 访问、亮度和音量实际应用及重启恢复、AP captive 跳转、扫描 / 连接、快速退出配网和并发客户端。

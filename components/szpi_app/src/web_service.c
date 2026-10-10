@@ -130,6 +130,12 @@ static esp_err_t device_status(httpd_req_t *req)
     cJSON_AddStringToObject(network, "ip", ip);
     if (online && wifi.rssi_valid) cJSON_AddNumberToObject(network, "rssi", wifi.rssi);
     else cJSON_AddNullToObject(network, "rssi");
+    char saved_hostname[SZPI_WIFI_HOSTNAME_MAX + 1];
+    if (szpi_wifi_load_hostname(saved_hostname) == ESP_OK) {
+        cJSON_AddStringToObject(settings, "hostname", saved_hostname);
+    } else {
+        cJSON_AddNullToObject(settings, "hostname");
+    }
     cJSON_AddBoolToObject(settings, "display_available", ui_valid);
     cJSON_AddBoolToObject(settings, "audio_available", audio_valid);
     if (ui_valid) cJSON_AddNumberToObject(settings, "brightness", ui.brightness_percent);
@@ -158,7 +164,7 @@ static esp_err_t device_status(httpd_req_t *req)
         cJSON_AddNullToObject(storage_json, "free_bytes");
     }
     if (cJSON_GetArraySize(root) != 10 || cJSON_GetArraySize(network) != 4 ||
-        cJSON_GetArraySize(settings) != 5 || cJSON_GetArraySize(camera_json) != 2 ||
+        cJSON_GetArraySize(settings) != 6 || cJSON_GetArraySize(camera_json) != 2 ||
         cJSON_GetArraySize(storage_json) != 3) {
         cJSON_Delete(root);
         return reply_error(req, "503 Service Unavailable");
@@ -220,6 +226,10 @@ static esp_err_t post_handler(httpd_req_t *req)
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(root, "value");
     esp_err_t err = ESP_ERR_INVALID_ARG;
     if (cJSON_IsObject(root) && cJSON_GetArraySize(root) == 2 && cJSON_IsString(key) &&
+        !strcmp(key->valuestring, "hostname") && cJSON_IsString(value)) {
+        // Persist only: DHCP, mDNS and the active status keep the boot hostname.
+        err = szpi_wifi_save_hostname(value->valuestring);
+    } else if (cJSON_IsObject(root) && cJSON_GetArraySize(root) == 2 && cJSON_IsString(key) &&
         cJSON_IsNumber(value) && isfinite(value->valuedouble) && value->valuedouble >= 0 &&
         value->valuedouble <= 100 && value->valuedouble == (double)value->valueint) {
         if (!strcmp(key->valuestring, "brightness") && value->valueint >= 10) {
