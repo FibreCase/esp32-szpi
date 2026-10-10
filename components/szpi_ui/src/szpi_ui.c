@@ -456,15 +456,15 @@ static bool create_detail_page(size_t index, const char *title)
         case SZPI_UI_MENU_STORAGE:
             return szpi_ui_storage_create(panel);
         case SZPI_UI_MENU_ABOUT:
-            if (!create_display_row(panel, 0, "Device", "SZ-PI") ||
-                !create_display_row(panel, 64, "Platform", "ESP32-S3")) return false;
-            s_about_version_value = create_display_row(panel, 128, "Version", "--");
+            if (!create_display_row(panel, 64, "Device", "SZ-PI") ||
+                !create_display_row(panel, 128, "Platform", "ESP32-S3")) return false;
+            s_about_version_value = create_display_row(panel, 192, "Version", "--");
             if (s_about_version_value == NULL) return false;
             lv_obj_set_width(s_about_version_value, 172);
             lv_label_set_long_mode(s_about_version_value, LV_LABEL_LONG_MODE_DOTS);
             lv_obj_set_style_text_align(s_about_version_value, LV_TEXT_ALIGN_RIGHT, 0);
             lv_obj_align(s_about_version_value, LV_ALIGN_RIGHT_MID, -12, 0);
-            s_about_hostname_value = create_display_row(panel, 192, "Hostname", "--");
+            s_about_hostname_value = create_display_row(panel, 0, "Hostname", "--");
             if (s_about_hostname_value == NULL) return false;
             lv_obj_set_width(s_about_hostname_value, 172);
             lv_label_set_long_mode(s_about_hostname_value, LV_LABEL_LONG_MODE_WRAP);
@@ -609,8 +609,11 @@ szpi_ui_result_t szpi_ui_update(const szpi_ui_model_t *model)
     }
     if (s_about_version_value != NULL) {
         const char *version = model->firmware_version[0] != '\0' ? model->firmware_version : "Unavailable";
-        if (strcmp(lv_label_get_text(s_about_version_value), version) != 0) {
-            lv_label_set_text(s_about_version_value, version);
+        const char *slot = model->running_ota_slot[0] != '\0' ? model->running_ota_slot : "Unavailable";
+        char version_text[sizeof(model->firmware_version) + sizeof(model->running_ota_slot) + 2];
+        lv_snprintf(version_text, sizeof(version_text), "%s (%s)", version, slot);
+        if (strcmp(lv_label_get_text(s_about_version_value), version_text) != 0) {
+            lv_label_set_text(s_about_version_value, version_text);
         }
     }
     if (s_about_ota_status != NULL && s_about_ota_button != NULL && s_about_ota_button_label != NULL) {

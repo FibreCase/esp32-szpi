@@ -2,6 +2,7 @@
 #include <time.h>
 #include "esp_log.h"
 #include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "nvs.h"
@@ -427,6 +428,10 @@ static void update_ui_model(void)
         .time_valid = time_valid,
     };
     const esp_app_desc_t *app_description = esp_app_get_description();
+    const esp_partition_t *running_partition = esp_ota_get_running_partition();
+    if (running_partition != NULL) {
+        snprintf(model.running_ota_slot, sizeof(model.running_ota_slot), "%s", running_partition->label);
+    }
     if (app_description != NULL) {
         snprintf(model.firmware_version, sizeof(model.firmware_version), "%s", app_description->version);
     }

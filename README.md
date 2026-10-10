@@ -44,7 +44,7 @@ Wi-Fi 开发期设置通过 `idf.py menuconfig` 中的 **SZPI application** 项�
 
 [task_phase_2.md](docs/develop/task_phase_2.md) 跟踪 ST7789 显示、FT6336 触摸、LVGL 和单屏验证 UI。UI 任务由 FreeRTOS runtime 统一创建，页面实现颜色 / 方向标记、点击计数、亮度滑条及触摸状态；固件构建和干净默认配置核对通过。坐标映射、刷新边界等逻辑测试及实物显示 / 触摸校准仍待完成，详见 [验证记录](docs/develop/phase_2_validation.md)。
 
-About 页面显示应用当前 hostname（默认为 `szpi`），长名称自动换行；固件通过 Wi-Fi 状态模型读取，模拟器显示示例值。
+About 的 Version 卡片以 `固件版本 (ota_x)` 单行显示固件版本与当前运行分区（ota_0 / ota_1），槽位来自官方运行分区查询；模拟器显示 Simulator。About 页面显示应用当前 hostname（默认为 `szpi`），长名称自动换行；固件通过 Wi-Fi 状态模型读取，模拟器显示示例值。
 
 ## 设置页持久化
 

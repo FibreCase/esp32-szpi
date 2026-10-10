@@ -76,3 +76,5 @@ FPS / Tearing 保留实际采样绑定；Screen 显示固定硬件 320×240，Th
 本次设置保存收尾改动通过 IDF 6.1 构建（独立网关模式构建目录）与 diff 空白检查。未执行烧录，未将编译通过当作 NVS 重启恢复的板上验收。
 
 2026-10-10：About 新增只读 Hostname 卡片，由 szpi_app 从 Wi-Fi 状态复制当前 hostname 到共享 UI 模型；默认设备名为 szpi，未获取状态时显示 Unavailable。最多 32 字符长名称换行，OTA 控件顺延；模拟器显示 szpi。
+
+2026-10-10：About 的 Version 卡片显示当前运行分区标签及固件版本；应用使用 esp_ota_get_running_partition() 查询实际运行槽位，经 running_ota_slot 模型传给共享 UI，不使用配置的启动分区或更新目标分区。以 `固件版本 (ota_x)` 单行显示，保留 56px 卡片高度，过长文本省略；模拟器标记 Simulator。
