@@ -1,9 +1,82 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>SZ-PI Wi-Fi setup</title><style>*{box-sizing:border-box}body{margin:0;background:#090b10;color:#e8edf5;font:16px system-ui,sans-serif}main{max-width:440px;margin:36px auto;padding:24px}h1{font-size:28px}p{color:#abb5c8;line-height:1.5}label{display:block;margin-top:20px}input,select,button{width:100%;padding:14px;margin-top:8px;border:1px solid #364156;border-radius:10px;background:#171e2c;color:inherit;font:inherit}button{background:#3678ec;border:0;cursor:pointer}button.secondary{background:#202b40}button:disabled{opacity:.5}#status{padding:16px;background:#171e2c;border-radius:10px;white-space:pre-wrap}small{display:block;color:#abb5c8;margin-top:12px}</style><main><h1>Connect your SZ-PI</h1><p>Choose a 2.4 GHz WPA2 or WPA3 network. Keep this device hotspot connected until setup finishes.</p><button type="button" id="scan" class="secondary">Scan nearby networks</button><label for="networks">Nearby networks</label><select id="networks"><option value="">Enter network manually</option></select><form id="form"><label for="ssid">Network name (SSID)</label><input id="ssid" required autocomplete="off"><label for="password">Wi-Fi password</label><input id="password" type="password" required minlength="8" maxlength="64" autocomplete="new-password"><label><input id="sae" type="checkbox" style="width:auto"> WPA3 only (manual network)</label><button id="connect">Connect</button></form><small>Hidden network? Enter its name above. Open and enterprise networks are not supported. No internet connection is needed for setup.</small><p id="status" role="status" aria-live="polite">Preparing secure setup session...</p></main><script>
-'use strict';let token='',pending=false,done=false;const $=id=>document.getElementById(id),status=$('status');async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Setup-Token':token}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw Error(r.status===403?'Setup session expired. Reopen this page.':r.status===409?'Device is busy. Please wait and retry.':'Request failed. Please retry.');return r.json()}
-function busy(value){pending=value;$('connect').disabled=value;$('scan').disabled=value}
-$('networks').onchange=()=>{const o=$('networks').selectedOptions[0];if(o.value){$('ssid').value=o.value;$('sae').checked=o.dataset.sae==='true'}};
-$('scan').onclick=async()=>{try{await api('/api/scan',{});status.textContent='Scanning nearby networks...'}catch(e){status.textContent=e.message}};
-$('form').onsubmit=async e=>{e.preventDefault();if(new TextEncoder().encode($('ssid').value).length>32){status.textContent='Network name must be at most 32 bytes.';return}try{busy(true);await api('/api/connect',{ssid:$('ssid').value,password:$('password').value,wpa3_only:$('sae').checked});$('password').value='';status.textContent='Connecting and waiting for an IP address...'}catch(e){busy(false);status.textContent=e.message}};
-let scanSignature='';async function poll(){if(done)return;try{const s=await api('/api/status');status.textContent=s.scanning?'Scanning nearby networks...':s.message;busy(s.state===2);if(s.state===4){done=true;busy(true);status.textContent='Connected! Your settings are saved. The device hotspot will now close. You can return to your usual Wi-Fi.';return}const sig=JSON.stringify(s.networks);if(sig!==scanSignature){scanSignature=sig;$('networks').replaceChildren(new Option('Enter network manually',''));for(const n of s.networks){const o=new Option(n.ssid+' ('+n.rssi+' dBm)'+(n.supported?'':' - unsupported'),n.ssid);o.disabled=!n.supported;o.dataset.sae=String(n.wpa3_only);$('networks').append(o)}}$('scan').disabled=pending||s.scanning;$('scan').textContent=s.scanning?'Scanning...':'Scan nearby networks'}catch(e){status.textContent='Hotspot unavailable. Check the device screen and reconnect if setup is still active.'}setTimeout(poll,1000)}
-api('/api/session').then(s=>{token=s.token;poll()}).catch(e=>{status.textContent=e.message;busy(true)});
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>SZ-PI Wi-Fi setup</title><style>*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:#090b10;color:#e8edf5;font:16px system-ui,sans-serif}main{max-width:440px;margin:36px auto;padding:24px}h1{font-size:28px}p{color:#abb5c8;line-height:1.5}label{display:block;margin-top:20px}input,select,button{width:100%;padding:14px;margin-top:8px;border:1px solid #364156;border-radius:10px;background:#171e2c;color:inherit;font:inherit}button{background:#3678ec;border:0;cursor:pointer}button:disabled{opacity:.5}#scan-status{margin:8px 0 0;white-space:pre-wrap}#status{padding:16px;background:#171e2c;border-radius:10px;white-space:pre-wrap}small{display:block;color:#abb5c8;margin-top:12px}</style><main><h1>Connect your SZ-PI</h1><p>Choose a 2.4 GHz WPA2 or WPA3 network. Keep this device hotspot connected until setup finishes.</p><button type="button" id="scan">Scan nearby networks</button><p id="scan-status" role="status" aria-live="polite" hidden></p><label for="networks">Choose a network</label><select id="networks"><option value="" data-manual="true">Manually Enter</option></select><form id="form" hidden><label for="ssid">Network name (SSID)</label><input id="ssid" required autocomplete="off"><label for="password">Wi-Fi password</label><input id="password" type="password" required minlength="8" maxlength="64" autocomplete="new-password"><label id="sae-field"><input id="sae" type="checkbox" style="width:auto"> WPA3 only (manual network)</label><button id="connect">Connect</button></form><small>Hidden network? Choose Manually Enter. Open and enterprise networks are not supported. No internet connection is needed for setup.</small><p id="status" role="status" aria-live="polite">Preparing secure setup session...</p></main><script>
+'use strict';
+let token='',pending=false,done=false,scanSignature='';
+const $=id=>document.getElementById(id),status=$('status'),scanStatus=$('scan-status');
+$('networks').selectedIndex=-1;
+function scanMessage(text){scanStatus.hidden=false;scanStatus.textContent=text}
+async function api(path,body){
+    const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Setup-Token':token}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+    if(!r.ok)throw Error(r.status===403?'Setup session expired. Reopen this page.':r.status===409?'Device is busy. Please wait and retry.':'Request failed. Please retry.');
+    return r.json();
+}
+function busy(value){
+    pending=value;
+    for(const id of ['connect','scan','networks','ssid','password','sae'])$(id).disabled=value;
+}
+function updateSelection(clearPassword){
+    const o=$('networks').selectedOptions[0];
+    const selected=!!o&&!o.disabled,manual=selected&&o.dataset.manual==='true';
+    $('form').hidden=!selected;
+    $('ssid').readOnly=!manual;
+    $('sae-field').hidden=!manual;
+    if(clearPassword||!selected)$('password').value='';
+    if(!selected){$('ssid').value='';$('sae').checked=false}
+    else if(manual){if(clearPassword){$('ssid').value='';$('sae').checked=false}}
+    else{$('ssid').value=o.value;$('sae').checked=o.dataset.sae==='true'}
+}
+function updateNetworks(networks){
+    const select=$('networks'),previous=select.selectedOptions[0];
+    const wasManual=previous&&previous.dataset.manual==='true',previousSsid=previous&&previous.value;
+    select.replaceChildren();
+    for(const n of networks){
+        const o=new Option(n.ssid+' ('+n.rssi+' dBm)'+(n.supported?'':' - unsupported'),n.ssid);
+        o.disabled=!n.supported;o.dataset.sae=String(n.wpa3_only);select.append(o);
+    }
+    const manual=new Option('Manually Enter','');manual.dataset.manual='true';select.append(manual);
+    select.selectedIndex=-1;
+    if(previous){
+        for(const o of select.options){
+            if(!o.disabled&&(wasManual?o.dataset.manual==='true':o.dataset.manual!=='true'&&o.value===previousSsid)){
+                o.selected=true;break;
+            }
+        }
+    }
+    updateSelection(false);
+}
+$('networks').onchange=()=>updateSelection(true);
+$('scan').onclick=async()=>{
+    try{await api('/api/setup/scan',{});scanMessage('Scanning nearby networks...')}
+    catch(e){scanMessage(e.message)}
+};
+$('form').onsubmit=async e=>{
+    e.preventDefault();
+    const o=$('networks').selectedOptions[0];
+    if(pending||done||!o||o.disabled||$('form').hidden)return;
+    const ssid=o.dataset.manual==='true'?$('ssid').value:o.value;
+    if(new TextEncoder().encode(ssid).length>32){status.textContent='Network name must be at most 32 bytes.';return}
+    try{
+        busy(true);
+        await api('/api/setup/connect',{ssid,password:$('password').value,wpa3_only:$('sae').checked});
+        $('password').value='';status.textContent='Connecting and waiting for an IP address...';
+    }catch(e){busy(false);status.textContent=e.message}
+};
+async function poll(){
+    if(done)return;
+    try{
+        const s=await api('/api/setup/status');
+        if(s.scanning||/^(Scanning |Scan )/.test(s.message))scanMessage(s.scanning?'Scanning nearby networks...':s.message);
+        else status.textContent=s.message;
+        busy(s.state===2);
+        if(s.state===4){
+            done=true;busy(true);
+            status.textContent='Connected! Your settings are saved. The device hotspot will now close. You can return to your usual Wi-Fi.';return;
+        }
+        const sig=JSON.stringify(s.networks);
+        if(sig!==scanSignature){scanSignature=sig;updateNetworks(s.networks)}
+        $('scan').disabled=pending||s.scanning;
+        $('scan').textContent=s.scanning?'Scanning...':'Scan nearby networks';
+    }catch(e){status.textContent='Hotspot unavailable. Check the device screen and reconnect if setup is still active.'}
+    setTimeout(poll,1000);
+}
+api('/api/setup/session').then(s=>{token=s.token;status.textContent='Ready to connect.';poll()}).catch(e=>{status.textContent=e.message;busy(true)});
 </script></html>
